@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unconsistent-structure-csv-reader"
+version = "0.1.0"
+description = "Resource-aware tool for analyzing and normalizing CSV files with inconsistent structure."
+readme = "README.md"
+authors = [
+    { name = "Data Engineering Tools" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "pyarrow>=17.0.0",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6.0,<0.7",
+    "mypy>=1.10,<1.11",
+    "pytest>=8.3,<9.0",
+]
+
+[project.scripts]
+uscsv = "ui.cli:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "B",   # flake8-bugbear
+    "I",   # isort
+    "UP",  # pyupgrade
+]
+ignore = [
+    "B905",  # allow zip() without strict for py311 compatibility
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+strict_optional = true
+allow_redefinition = false
+show_error_codes = true
+pretty = true
+
+[tool.mypy."src.*"]
+disallow_untyped_defs = true
+
+[tool.setuptools.packages.find]
+where = ["src"]

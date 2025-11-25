@@ -1,0 +1,6 @@
+{
+  "customer_id": ["cust_id", "client_id", "klient_id", "customerid"],
+  "order_total": ["total", "amount", "summa"],
+  "order_date": ["date", "datum", "дата"],
+  "store_id": ["shop_id", "mag_id"]
+}

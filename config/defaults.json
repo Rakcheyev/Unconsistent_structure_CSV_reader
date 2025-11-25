@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "global": {
+    "encoding": "utf-8",
+    "error_policy": "fail-fast",
+    "synonym_dictionary": "storage/synonyms.json"
+  },
+  "profiles": {
+    "low_memory": {
+      "description": "2-core CPU, <=2 GB RAM, spinning disk",
+      "block_size": 1000,
+      "min_gap_lines": 200,
+      "max_parallel_files": 1,
+      "sample_values_cap": 24,
+      "writer_chunk_rows": 25000
+    },
+    "workstation": {
+      "description": "8-core CPU, >=16 GB RAM, SSD",
+      "block_size": 10000,
+      "min_gap_lines": 100,
+      "max_parallel_files": 4,
+      "sample_values_cap": 64,
+      "writer_chunk_rows": 100000
+    }
+  }
+}
