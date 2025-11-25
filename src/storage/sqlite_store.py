@@ -10,63 +10,114 @@ from typing import Iterable, List
 from common.models import FileProgress, JobMetrics, JobProgressEvent, MappingConfig
 
 
-SCHEMA_STATEMENTS = [
-    """
-    CREATE TABLE IF NOT EXISTS schemas (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        columns_json TEXT NOT NULL,
-        updated_at REAL NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS blocks (
-        block_key TEXT PRIMARY KEY,
-        file_path TEXT NOT NULL,
-        block_id INTEGER NOT NULL,
-        schema_id TEXT,
-        start_line INTEGER NOT NULL,
-        end_line INTEGER NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS audit_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        entity TEXT NOT NULL,
-        action TEXT NOT NULL,
-        detail TEXT,
-        created_at REAL NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS job_metrics (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        schema_id TEXT NOT NULL,
-        schema_name TEXT,
-        rows_written INTEGER NOT NULL,
-        duration_seconds REAL NOT NULL,
-        rows_per_second REAL NOT NULL,
-        error_count INTEGER NOT NULL,
-        warnings_json TEXT,
-        spill_count INTEGER NOT NULL,
-        rows_spilled INTEGER NOT NULL,
-        created_at REAL NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS job_progress_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        schema_id TEXT NOT NULL,
-        schema_name TEXT,
-        file_path TEXT NOT NULL,
-        processed_rows INTEGER NOT NULL,
-        total_rows INTEGER,
-        eta_seconds REAL,
-        rows_per_second REAL,
-        spill_rows INTEGER,
-        created_at REAL NOT NULL
-    )
-    """,
+SCHEMA_MIGRATIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    applied_at REAL NOT NULL
+)
+"""
+
+MIGRATIONS: List[tuple[int, List[str]]] = [
+    (
+        1,
+        [
+            """
+            CREATE TABLE IF NOT EXISTS schemas (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                columns_json TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_schemas_updated_at ON schemas(updated_at)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS blocks (
+                block_key TEXT PRIMARY KEY,
+                file_path TEXT NOT NULL,
+                block_id INTEGER NOT NULL,
+                schema_id TEXT,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_blocks_schema_block ON blocks(schema_id, block_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_blocks_file_path ON blocks(file_path)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                schema_id TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                metrics_json TEXT NOT NULL,
+                updated_at REAL NOT NULL,
+                FOREIGN KEY(schema_id) REFERENCES schemas(id)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_stats_schema_column ON stats(schema_id, column_name)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS synonyms (
+                canonical_name TEXT NOT NULL,
+                variant TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                PRIMARY KEY (canonical_name, variant)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_synonyms_variant ON synonyms(variant)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity TEXT NOT NULL,
+                action TEXT NOT NULL,
+                detail TEXT,
+                created_at REAL NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS job_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                schema_id TEXT NOT NULL,
+                schema_name TEXT,
+                rows_written INTEGER NOT NULL,
+                duration_seconds REAL NOT NULL,
+                rows_per_second REAL NOT NULL,
+                error_count INTEGER NOT NULL,
+                warnings_json TEXT,
+                spill_count INTEGER NOT NULL,
+                rows_spilled INTEGER NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_job_metrics_schema ON job_metrics(schema_id)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS job_progress_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                schema_id TEXT NOT NULL,
+                schema_name TEXT,
+                file_path TEXT NOT NULL,
+                processed_rows INTEGER NOT NULL,
+                total_rows INTEGER,
+                eta_seconds REAL,
+                rows_per_second REAL,
+                spill_rows INTEGER,
+                created_at REAL NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_job_progress_schema ON job_progress_events(schema_id, created_at)
+            """,
+        ],
+    ),
 ]
 
 MAX_PROGRESS_EVENTS_PER_SCHEMA = 500
@@ -75,9 +126,7 @@ MAX_PROGRESS_EVENTS_PER_SCHEMA = 500
 def initialize(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
-        for statement in SCHEMA_STATEMENTS:
-            conn.execute(statement)
-        conn.commit()
+        _apply_migrations(conn)
 
 
 def persist_mapping(mapping: MappingConfig, db_path: Path) -> None:
@@ -289,3 +338,21 @@ def _prune_progress_events(
         """,
         (schema_id, schema_id, effective_limit),
     )
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    conn.execute(SCHEMA_MIGRATIONS_TABLE)
+    applied_versions = {
+        row[0]
+        for row in conn.execute("SELECT version FROM schema_migrations")
+    }
+    for version, statements in sorted(MIGRATIONS, key=lambda item: item[0]):
+        if version in applied_versions:
+            continue
+        for statement in statements:
+            conn.execute(statement)
+        conn.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (version, time.time()),
+        )
+        conn.commit()

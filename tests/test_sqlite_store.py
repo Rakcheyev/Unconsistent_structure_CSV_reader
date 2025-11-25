@@ -6,7 +6,12 @@ from pathlib import Path
 
 from common.models import FileProgress, JobMetrics, SpillMetrics, ValidationSummary
 from storage import fetch_job_progress_events, prune_progress_history
-from storage.sqlite_store import initialize, record_job_metrics, record_progress_event
+from storage.sqlite_store import (
+    MIGRATIONS,
+    initialize,
+    record_job_metrics,
+    record_progress_event,
+)
 
 
 def test_record_job_metrics_persists_rows(tmp_path: Path) -> None:
@@ -131,3 +136,32 @@ def test_progress_event_retention_enforced(tmp_path: Path, monkeypatch) -> None:
     prune_progress_history(db_path, schema_id="schema-2", max_per_schema=0)
     other = fetch_job_progress_events(db_path, schema_id="schema-2")
     assert other == []
+
+
+def test_initialize_applies_all_migrations(tmp_path: Path) -> None:
+    db_path = tmp_path / "migrations.db"
+    initialize(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        expected_tables = {
+            "schemas",
+            "blocks",
+            "stats",
+            "synonyms",
+            "audit_log",
+            "job_metrics",
+            "job_progress_events",
+            "schema_migrations",
+        }
+        assert expected_tables.issubset(tables)
+
+        latest_version = MIGRATIONS[-1][0]
+        applied_versions = {
+            row[0]
+            for row in conn.execute("SELECT version FROM schema_migrations")
+        }
+        assert latest_version in applied_versions

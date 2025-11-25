@@ -15,6 +15,7 @@ from core.mapping import MappingService
 from core.materialization import MaterializationPlanner, MaterializationJobRunner
 from core.normalization import NormalizationService, SynonymDictionary
 from storage import (
+    init_sqlite,
     load_mapping_config,
     persist_mapping_sqlite,
     record_audit_event,
@@ -400,12 +401,19 @@ def maybe_record_job_metrics(sqlite_arg: str | None, summary) -> None:
     record_job_metrics(Path(sqlite_arg), summary.to_job_metrics())
 
 
+def maybe_initialize_sqlite(sqlite_arg: str | None) -> None:
+    if not sqlite_arg:
+        return
+    init_sqlite(Path(sqlite_arg))
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
     if not hasattr(args, "func"):
         parser.print_help()
         return
+    maybe_initialize_sqlite(getattr(args, "sqlite_db", None))
     args.func(args)
 
 

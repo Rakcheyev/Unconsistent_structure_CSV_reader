@@ -26,3 +26,7 @@
 ## Complexity Target
 `O(n) + O(m log m)` з `m ≪ n`, тобто практично `O(n)`.
 Важкі кроки (кластеризація сигнатур) працюють на семплі, не на повному наборі рядків.
+
+## Reference Implementations
+- `core.analysis.line_counter.LineCounter` читає файли chunk'ами по 1 МБ у двійковому режимі, щоб швидко порахувати рядки незалежно від кодування.
+- `core.analysis.block_planner.BlockPlanner` застосовує `build_sample_indices`/`to_block` правила, але стрімить блоки із буфером ≤1 МБ, щоб `AnalysisEngine` не тримав увесь блок у пам'яті.

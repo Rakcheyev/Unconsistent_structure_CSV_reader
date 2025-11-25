@@ -57,14 +57,24 @@ $ ./scripts/bootstrap_env.sh --dev
 4. **Нормалізація назв** — `uscsv normalize mapping.review.json --output mapping.normalized.json --sqlite-db artifacts/storage.db` застосовує словник синонімів.
 5. **Матеріалізація (реальний writer)** — `uscsv materialize mapping.normalized.json --dest artifacts/output --checkpoint artifacts/materialize_checkpoint.json --plan artifacts/materialization_plan.json --writer-format parquet --spill-threshold 20000 --telemetry-log artifacts/materialize_metrics.jsonl --sqlite-db artifacts/storage.db --db-url sqlite:///artifacts/output.db`. Команда створює chunked вихід (CSV, Parquet через PyArrow, або SQLite database) з відновленням по checkpoint, не тримає більше двох активних writers, логуватиме short/long rows, spill events, throughput у SQLite (`job_metrics`) / JSONL та випромінює ETA/`FileProgress` події для UI.
 
+Для швидкого smoke-прогону існує `scripts/run_cli_smoke.ps1`, який запускає `uscsv analyze` на `tests/data/retail_small.csv`, а потім автоматично видаляє тимчасові `artifacts/cli_smoke*.{json,db}` незалежно від результату.
+
 Прапорець `--include-samples` на кожному етапі додає в JSON обмежену кількість `sample_values` (корисно для дебагу, але збільшує розмір файлу).
 
 ## SQLite/Parquet persistence, словник синонімів і телеметрія
 
 - Файл `storage/synonyms.json` містить просту мапу `NormalizedName -> [variants...]`. CLI автоматично підтягує його для команд `review` та `normalize`, але за потреби шлях можна перевизначити через `--synonyms`.
-- Параметр `--sqlite-db` (опційний для analyze/review/normalize/materialize) створює/оновлює SQLite із таблицями `schemas`, `blocks`, `audit_log`, `job_metrics`, `job_progress_events`. `job_metrics` зберігає per-schema rows, rows/s, short/long rows, spill телеметрію, а `job_progress_events` — кожен `FileProgress` tick (processed rows, ETA, rows/s, spill count) для live/history UI панелей. Дані читаються через `storage.fetch_job_progress_events` і автоматично прунінгуються до 500 записів на схему (`storage.prune_progress_history` дає ручний контроль).
+- Параметр `--sqlite-db` (опційний для analyze/review/normalize/materialize) створює/оновлює SQLite із таблицями `schemas`, `blocks`, `stats`, `synonyms`, `audit_log`, `job_metrics`, `job_progress_events`. `job_metrics` зберігає per-schema rows, rows/s, short/long rows, spill телеметрію, а `job_progress_events` — кожен `FileProgress` tick (processed rows, ETA, rows/s, spill count) для live/history UI панелей. Дані читаються через `storage.fetch_job_progress_events` і автоматично прунінгуються до 500 записів на схему (`storage.prune_progress_history` дає ручний контроль). `storage.initialize` веде таблицю `schema_migrations`, тож будь-який виклик CLI автоматично застосовує відсутні міграції без ручного SQL.
+- `MappingConfig.to_dict()/from_dict()` (обгорнуті навколо `common.mapping_serialization`) дозволяють швидко конвертувати mapping у JSON-ready dict без копіювання `sample_values`, якщо прапорець `include_samples=False` (використовується CLI/storage для легких записів).
 - `--telemetry-log` для `materialize` накопичує JSONL-рядки з throughput/validation/spill даними; це використовується UI історією job'ів без доступу до SQLite.
 - `--writer-format` тепер обирає реальні writers: `csv`, `parquet` (PyArrow `.parquet` файли) або `database` (SQLite таблиця, вимагає `--db-url=sqlite:///...`). `--spill-threshold` дає змогу примусити spill-to-temp/back-pressure і переглядати, коли writer'и не встигають.
+
+### SQLite upgrade path
+
+1. (Опційно) створіть копію чинної БД: `Copy-Item artifacts/storage.db artifacts/storage.backup.db`.
+2. Запустіть будь-яку команду `uscsv` із тим же шляхом (`--sqlite-db artifacts/storage.db`). Перед виконанням фази CLI викличе `storage.initialize`, що проганяє `_apply_migrations` і оновлює `schema_migrations`.
+3. Перевірте версію міграцій за потреби: `python -m sqlite3 artifacts/storage.db "SELECT * FROM schema_migrations ORDER BY version;"`.
+4. Команду можна повторювати безпечно — міграції ідемпотентні, тож додаткових кроків чи ручного SQL не потрібно.
 
 ## Smoke Tests
 

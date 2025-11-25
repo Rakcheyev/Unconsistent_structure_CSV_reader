@@ -68,6 +68,19 @@ class MappingConfig:
     blocks: List[FileBlock] = field(default_factory=list)
     schemas: List[SchemaDefinition] = field(default_factory=list)
 
+    def to_dict(self, *, include_samples: bool = False) -> Dict[str, object]:
+        """Return a JSON-ready dictionary without copying sample payloads unless requested."""
+
+        from . import mapping_serialization
+
+        return mapping_serialization.mapping_to_dict(self, include_samples=include_samples)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, object]) -> "MappingConfig":
+        from . import mapping_serialization
+
+        return mapping_serialization.mapping_from_dict(data)
+
 
 @dataclass(slots=True)
 class FileProgress:

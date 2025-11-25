@@ -4,7 +4,6 @@ from __future__ import annotations
 import time
 from collections import Counter, deque
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -18,10 +17,13 @@ from common.models import (
     SchemaSignature,
 )
 from common.progress import ProgressLogger
+from .block_planner import BlockPlanner
+from .line_counter import LineCounter
 
 ProgressCallback = Optional[Callable[[FileProgress], None]]
 
 MAX_SIGNATURE_SAMPLE_LINES = 100
+
 class AdaptiveThrottle:
     """Simple moving-average based throttler that adjusts concurrency."""
 
@@ -52,60 +54,6 @@ class AdaptiveThrottle:
     @property
     def limit(self) -> int:
         return max(self.min_workers, min(self.max_workers, self._limit))
-
-
-
-@dataclass(slots=True)
-class PlannedBlock:
-    block_id: int
-    start_line: int
-    end_line: int
-
-
-def build_sample_indices(total_lines: int, min_gap: int) -> List[int]:
-    if total_lines <= 0:
-        return []
-
-    min_gap = max(1, min_gap)
-    samples = {0, max(0, total_lines - 1)}
-
-    changed = True
-    while changed:
-        changed = False
-        ordered = sorted(samples)
-        for left, right in zip(ordered, ordered[1:]):
-            if right - left > min_gap:
-                mid = left + (right - left) // 2
-                if mid not in samples:
-                    samples.add(mid)
-                    changed = True
-    return sorted(samples)
-
-
-def to_block(line_index: int, total_lines: int, block_size: int) -> Tuple[int, int]:
-    block_size = max(1, block_size)
-    total_lines = max(1, total_lines)
-
-    half = block_size // 2
-    start = max(0, line_index - half)
-    end = min(total_lines - 1, start + block_size - 1)
-    start = max(0, end - block_size + 1)
-    return start, end
-
-
-def plan_blocks(total_lines: int, block_size: int, min_gap: int) -> List[PlannedBlock]:
-    indices = build_sample_indices(total_lines, min_gap)
-    seen = set()
-    planned: List[PlannedBlock] = []
-    for block_id, idx in enumerate(indices):
-        start, end = to_block(idx, total_lines, block_size)
-        key = (start, end)
-        if key in seen:
-            continue
-        seen.add(key)
-        planned.append(PlannedBlock(block_id=block_id, start_line=start, end_line=end))
-    return sorted(planned, key=lambda b: b.start_line)
-
 
 def detect_delimiter(line: str) -> str:
     candidates = [",", ";", "\t", "|"]
@@ -167,14 +115,6 @@ def update_type_flags(value: str, stats: ColumnStats) -> None:
         stats.maybe_date = False
 
 
-def count_lines(path: Path, *, encoding: str, errors: str) -> int:
-    line_count = 0
-    with path.open("r", encoding=encoding, errors=errors) as handle:
-        for _ in handle:
-            line_count += 1
-    return line_count
-
-
 def analyze_file(
     path: Path,
     *,
@@ -184,61 +124,30 @@ def analyze_file(
     min_gap_lines: int,
     sample_cap: int,
 ) -> FileAnalysisResult:
-    total_lines = count_lines(path, encoding=encoding, errors=errors)
-    plan = plan_blocks(total_lines, block_size, min_gap_lines)
+    line_counter = LineCounter()
+    total_lines = line_counter.count(path)
+    planner = BlockPlanner(block_size=block_size, min_gap_lines=min_gap_lines)
+    plan = planner.plan(total_lines)
     blocks: List[FileBlock] = []
 
     if not plan:
         return FileAnalysisResult(file_path=path, total_lines=total_lines, blocks=[])
 
-    plan_iter = iter(plan)
-    current = next(plan_iter, None)
-    if current is None:
-        return FileAnalysisResult(file_path=path, total_lines=total_lines, blocks=[])
-
-    buffer: List[str] = []
-
-    with path.open("r", encoding=encoding, errors=errors) as handle:
-        for line_number, line in enumerate(handle):
-            while current and line_number > current.end_line:
-                blocks.append(
-                    FileBlock(
-                        file_path=path,
-                        block_id=current.block_id,
-                        start_line=current.start_line,
-                        end_line=current.end_line,
-                        signature=build_signature(buffer, sample_cap),
-                    )
-                )
-                buffer.clear()
-                current = next(plan_iter, None)
-            if current is None:
-                break
-            if current.start_line <= line_number <= current.end_line:
-                buffer.append(line)
-
-        if current is not None and buffer:
-            blocks.append(
-                FileBlock(
-                    file_path=path,
-                    block_id=current.block_id,
-                    start_line=current.start_line,
-                    end_line=current.end_line,
-                    signature=build_signature(buffer, sample_cap),
-                )
+    for planned_block, lines in planner.iter_block_buffers(
+        path,
+        plan,
+        encoding=encoding,
+        errors=errors,
+    ):
+        blocks.append(
+            FileBlock(
+                file_path=path,
+                block_id=planned_block.block_id,
+                start_line=planned_block.start_line,
+                end_line=planned_block.end_line,
+                signature=build_signature(lines, sample_cap),
             )
-            buffer.clear()
-
-        for remaining in plan_iter:
-            blocks.append(
-                FileBlock(
-                    file_path=path,
-                    block_id=remaining.block_id,
-                    start_line=remaining.start_line,
-                    end_line=remaining.end_line,
-                    signature=build_signature([], sample_cap),
-                )
-            )
+        )
 
     return FileAnalysisResult(file_path=path, total_lines=total_lines, blocks=blocks)
 
