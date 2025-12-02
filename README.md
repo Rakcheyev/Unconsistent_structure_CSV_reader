@@ -47,7 +47,50 @@ $ ./scripts/bootstrap_env.sh --dev
 
 Скрипти створюють `.venv`, оновлюють `pip` і ставлять поточний пакет (з dev-інструментами за потреби). Це гарантує однакове оточення навіть на версіях Windows Server або мінімальних Linux-боксах.
 
-## CLI Workflow Shell
+
+## GUI Workflow (DearPyGui)
+
+The project includes a graphical user interface (GUI) built with DearPyGui for easy batch processing and export of CSV/TSV files. The GUI allows you to:
+
+- Select an input folder containing CSV/TSV files
+- Select an output folder for results
+- Choose output format (CSV, JSON)
+- Set memory cap and chunk size
+- View progress and logs during processing
+
+### Running the GUI
+
+To run the GUI from source:
+
+```powershell
+PS> python src/ui/uscsv_gui.py
+```
+
+### Packaging the GUI as an .exe
+
+To create a standalone Windows executable:
+
+```powershell
+PS> pip install pyinstaller
+PS> pyinstaller --onefile src/ui/uscsv_gui.py
+```
+
+The packaged `.exe` will be in the `dist` folder. Copy it to any Windows PC and run directly—no Python required.
+
+### GUI Features
+
+- Batch processing of all CSV/TSV files in the selected folder
+- Output format selection (CSV, JSON)
+- Memory and chunk size configuration
+- Progress bar and log window for feedback
+- Error handling and completion messages
+
+### Troubleshooting
+
+- If you see missing DLL or dependency errors, ensure all required Python packages are installed before packaging.
+- For large datasets, increase memory cap and chunk size as needed.
+- If the GUI does not launch, check that your graphics drivers support OpenGL (required by DearPyGui).
+
 
 Після bootstrap доступний покроковий CLI (`uscsv`) для всього сценарію Import → Analyze → Review → Normalize → Materialize:
 
@@ -56,6 +99,7 @@ $ ./scripts/bootstrap_env.sh --dev
 3. **Рев'ю / кластеризація** — `uscsv review mapping.json --output mapping.review.json --synonyms storage/synonyms.json --sqlite-db artifacts/storage.db` запускає heuristic clustering і синхронізує результати в SQLite.
 4. **Нормалізація назв** — `uscsv normalize mapping.review.json --output mapping.normalized.json --sqlite-db artifacts/storage.db` застосовує словник синонімів.
 5. **Матеріалізація (реальний writer)** — `uscsv materialize mapping.normalized.json --dest artifacts/output --checkpoint artifacts/materialize_checkpoint.json --plan artifacts/materialization_plan.json --writer-format parquet --spill-threshold 20000 --telemetry-log artifacts/materialize_metrics.jsonl --sqlite-db artifacts/storage.db --db-url sqlite:///artifacts/output.db`. Команда створює chunked вихід (CSV, Parquet через PyArrow, або SQLite database) з відновленням по checkpoint, не тримає більше двох активних writers, логуватиме short/long rows, spill events, throughput у SQLite (`job_metrics`) / JSONL та випромінює ETA/`FileProgress` події для UI.
+
 
 Для швидкого smoke-прогону існує `scripts/run_cli_smoke.ps1`, який запускає `uscsv analyze` на `tests/data/retail_small.csv`, а потім автоматично видаляє тимчасові `artifacts/cli_smoke*.{json,db}` незалежно від результату.
 
