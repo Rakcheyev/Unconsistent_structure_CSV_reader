@@ -228,7 +228,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyze.add_argument(
         "--output",
-        default="mapping.json",
+        default="output_data/mapping.json",
         help="Path to write mapping configuration JSON",
     )
     analyze.add_argument(
@@ -329,7 +329,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     materialize.add_argument(
         "--dest",
-        default="artifacts/output",
+        default="output_data/",
         help="Base directory where future dataset files will be written",
     )
     materialize.add_argument(

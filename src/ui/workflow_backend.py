@@ -12,11 +12,11 @@ from common.models import MappingConfig
 SUPPORTED_EXTENSIONS = {".csv", ".tsv", ".txt"}
 
 def collect_csv_files(input_folder: str) -> List[Path]:
-    folder = Path(input_folder)
+    folder = Path(input_folder or "input_data/")
     return [p for p in folder.glob("**/*") if p.suffix.lower() in SUPPORTED_EXTENSIONS]
 
 def run_batch_workflow(input_folder: str, output_folder: str, output_format: str, memory_cap: int, chunk_size: int):
-    files = collect_csv_files(input_folder)
+    files = collect_csv_files(input_folder or "input_data/")
     if not files:
         print("No CSV files found in input folder.")
         return
@@ -44,7 +44,7 @@ def run_batch_workflow(input_folder: str, output_folder: str, output_format: str
 
     # Save mapping config
     mapping = MappingConfig(blocks=all_blocks, schemas=[])
-    mapping_path = Path(output_folder) / "mapping.json"
+    mapping_path = Path(output_folder or "output_data/") / "mapping.json"
     save_mapping_config(mapping, mapping_path)
 
     # Materialize output
@@ -53,5 +53,5 @@ def run_batch_workflow(input_folder: str, output_folder: str, output_format: str
         writer_format=output_format.lower(),
         spill_threshold=chunk_size,
     )
-    job_runner.run(mapping, Path(output_folder))
+    job_runner.run(mapping, Path(output_folder or "output_data/"))
     print(f"Materialization complete. Output saved to {output_folder}")
