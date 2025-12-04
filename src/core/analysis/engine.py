@@ -23,6 +23,27 @@ from .line_counter import LineCounter
 ProgressCallback = Optional[Callable[[FileProgress], None]]
 
 MAX_SIGNATURE_SAMPLE_LINES = 100
+ENCODING_SENTINEL_PREFIX = "ENCODING:"  # stored in header_sample for downstream phases
+
+
+def detect_file_encoding(path: Path, default: str = "utf-8") -> str:
+    """Very small heuristic: try utf-8, then cp1251, else fallback to default.
+
+    Works on the first chunk of the file only to avoid IO overhead.
+    """
+
+    candidates = ["utf-8", "cp1251"]
+    with path.open("rb") as handle:
+        raw = handle.read(4096)
+    if not raw:
+        return default
+    for enc in candidates:
+        try:
+            raw.decode(enc)
+            return enc
+        except UnicodeDecodeError:
+            continue
+    return default
 
 class AdaptiveThrottle:
     """Simple moving-average based throttler that adjusts concurrency."""
@@ -65,14 +86,14 @@ def normalize_value(value: str) -> str:
     return value.strip().strip('"').strip("'")
 
 
-def build_signature(block_lines: List[str], sample_cap: int) -> SchemaSignature:
+def build_signature(block_lines: List[str], sample_cap: int, *, encoding: str) -> SchemaSignature:
     if not block_lines:
         return SchemaSignature()
 
     first_line = block_lines[0].rstrip("\n\r")
     delimiter = detect_delimiter(first_line)
     sample_lines = block_lines[:MAX_SIGNATURE_SAMPLE_LINES]
-    header_sample = first_line if first_line else None
+    header_sample = f"{ENCODING_SENTINEL_PREFIX}{encoding}" if first_line else None
 
     column_stats: Dict[int, ColumnStats] = {}
     col_count_counter: Counter[int] = Counter()
@@ -145,7 +166,7 @@ def analyze_file(
                 block_id=planned_block.block_id,
                 start_line=planned_block.start_line,
                 end_line=planned_block.end_line,
-                signature=build_signature(lines, sample_cap),
+                signature=build_signature(lines, sample_cap, encoding=encoding),
             )
         )
 
@@ -191,17 +212,19 @@ class AnalysisEngine:
 
         max_workers = max(1, self.config.profile.max_parallel_files)
         order_map = {path.resolve(): idx for idx, path in enumerate(files)}
-        tasks = [
-            (
-            str(path.resolve()),
-                self.encoding,
-                self.errors,
-                self.config.profile.block_size,
-                self.config.profile.min_gap_lines,
-                self.config.profile.sample_values_cap,
+        tasks = []
+        for path in files:
+            detected_enc = detect_file_encoding(path, default=self.encoding)
+            tasks.append(
+                (
+                    str(path.resolve()),
+                    detected_enc,
+                    self.errors,
+                    self.config.profile.block_size,
+                    self.config.profile.min_gap_lines,
+                    self.config.profile.sample_values_cap,
+                )
             )
-            for path in files
-        ]
 
         results: List[FileAnalysisResult] = []
         if max_workers == 1:

@@ -8,12 +8,13 @@ from pathlib import Path
 from typing import Callable, Iterable, List
 
 from common.config import load_runtime_config
-from common.models import FileProgress, MappingConfig, RuntimeConfig
+from common.models import FileAnalysisResult, FileProgress, MappingConfig, RuntimeConfig
 from common.progress import BenchmarkRecorder
 from core.analysis import AnalysisEngine
 from core.mapping import MappingService
 from core.materialization import MaterializationPlanner, MaterializationJobRunner
 from core.normalization import NormalizationService, SynonymDictionary
+from ui.workflow_backend import build_header_clusters
 from storage import (
     init_sqlite,
     load_mapping_config,
@@ -72,20 +73,29 @@ def command_analyze(args: argparse.Namespace) -> None:
 
     runtime = load_runtime_config(profile=args.profile)
     progress_log = Path(args.progress_log) if args.progress_log else None
-    engine = AnalysisEngine(runtime, progress_log=progress_log)
 
+    # Try utf-8 first, fallback to cp1251 if decode error occurs
+    engine = AnalysisEngine(runtime, progress_log=progress_log)
     print(
         f"Starting analysis for {len(files)} file(s) using profile '{args.profile}' "
         f"(block_size={runtime.profile.block_size}, parallel={runtime.profile.max_parallel_files})"
     )
-
-    results = engine.analyze_files(files, progress_callback=render_progress)
+    print(f"[analyze] Using encoding: {runtime.global_settings.encoding}")
+    try:
+        results: List[FileAnalysisResult] = engine.analyze_files(files, progress_callback=render_progress)
+    except UnicodeDecodeError:
+        print("UnicodeDecodeError: retrying with cp1251 encoding...")
+        runtime.global_settings.encoding = "cp1251"
+        print(f"[analyze] Fallback encoding: cp1251")
+        engine = AnalysisEngine(runtime, progress_log=progress_log)
+        results: List[FileAnalysisResult] = engine.analyze_files(files, progress_callback=render_progress)
 
     all_blocks = []
     for result in results:
         all_blocks.extend(result.blocks)
 
-    mapping = MappingConfig(blocks=all_blocks, schemas=[])
+    header_clusters = build_header_clusters(results)
+    mapping = MappingConfig(blocks=all_blocks, schemas=[], header_clusters=header_clusters)
     output_path = Path(args.output)
     save_mapping_config(mapping, output_path, include_samples=args.include_samples)
     maybe_persist_sqlite(mapping, args.sqlite_db, "analyze")
@@ -129,13 +139,72 @@ def command_benchmark(args: argparse.Namespace) -> None:
 def command_review(args: argparse.Namespace) -> None:
     runtime = load_runtime_config(profile=args.profile)
     mapping = load_mapping_config(Path(args.mapping))
-    synonyms = load_synonyms(args.synonyms, runtime)
+
+    # Auto-generate synonym dictionary from all headers in blocks, grouping by canonical slug
+    import re
+    import unicodedata
+    def translit(text):
+        # Simple Cyrillic to Latin transliteration (expand as needed)
+        table = str.maketrans({
+            "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh", "з": "z", "и": "i", "й": "i", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya"
+        })
+        return text.translate(table)
+
+    def canonical_slug(h):
+        h = h.strip().lower()
+        h = translit(h)
+        h = unicodedata.normalize("NFKD", h)
+        h = re.sub(r"[\W_]+", " ", h)  # Replace non-word chars with space
+        h = re.sub(r"\s+", " ", h)     # Collapse spaces
+        h = h.strip()
+        return h
+
+    header_groups = {}
+    for block in mapping.blocks:
+        sig = block.signature
+        if sig.header_sample:
+            raw_headers = [cell.strip() for cell in sig.header_sample.split(sig.delimiter)]
+            for h in raw_headers:
+                slug = canonical_slug(h)
+                if slug not in header_groups:
+                    header_groups[slug] = []
+                header_groups[slug].append(h)
+
+    synonyms_map = {slug: variants for slug, variants in header_groups.items()}
+    # For SynonymDictionary, map canonical name to all its variants
+    synonyms = SynonymDictionary.from_mapping({k: v for k, v in synonyms_map.items()})
+
+    # Clean output files before each run
+    output_dir = Path(args.output).parent
+    for f in output_dir.glob("*"):
+        if f.is_file():
+            f.unlink()
 
     service = MappingService(synonyms)
     updated = service.cluster(mapping.blocks)
 
+    # --- Auto-detect header line for each block ---
+    for block in updated.blocks:
+        file_path = block.file_path
+        header_sample = (block.signature.header_sample or "").strip()
+        if not header_sample:
+            continue
+        try:
+            with file_path.open("r", encoding="utf-8", errors="replace") as f:
+                for idx, line in enumerate(f):
+                    if line.rstrip("\n\r").strip() == header_sample:
+                        block.start_line = idx + 1
+                        break
+        except Exception as e:
+            print(f"[header-detect] Error reading {file_path}: {e}")
+
+    # Offset detection integration
+    from core.mapping.offset_detection import detect_offsets
+    updated.schema_mapping = detect_offsets(updated.header_clusters)
+
     output_path = Path(args.output)
     save_mapping_config(updated, output_path, include_samples=args.include_samples)
+    print(f"[review] mapping saved to: {output_path} (exists: {output_path.exists()})")
     maybe_persist_sqlite(updated, args.sqlite_db, "review")
 
     print(
@@ -160,26 +229,33 @@ def command_normalize(args: argparse.Namespace) -> None:
 def command_materialize(args: argparse.Namespace) -> None:
     runtime = load_runtime_config(profile=args.profile)
     mapping = load_mapping_config(Path(args.mapping))
+    print(f"[materialize] Loaded mapping: {args.mapping} blocks={len(mapping.blocks)} schemas={len(mapping.schemas)}")
 
     if args.writer_format == "database" and not args.db_url:
         raise SystemExit("--db-url is required when --writer-format=database")
 
     checkpoint_path = Path(args.checkpoint) if args.checkpoint else None
     dest_dir = Path(args.dest)
+    # Clean output directory before materialization
+    if dest_dir.exists() and dest_dir.is_dir():
+        for f in dest_dir.glob("*.csv"):
+            try:
+                f.unlink()
+            except Exception as e:
+                print(f"[materialize] Failed to delete {f}: {e}")
     telemetry_log = Path(args.telemetry_log) if args.telemetry_log else None
     progress_callbacks: List[Callable[[FileProgress], None]] = [render_materialization_progress]
     progress_db_path: Path | None = Path(args.sqlite_db) if args.sqlite_db else None
     if progress_db_path:
-
         def persist_progress(progress: FileProgress) -> None:
             record_progress_event(progress_db_path, progress)
-
         progress_callbacks.append(persist_progress)
 
     def combined_progress(progress: FileProgress) -> None:
         for callback in progress_callbacks:
             callback(progress)
 
+    print(f"[materialize] Using encoding: {runtime.global_settings.encoding}")
     runner = MaterializationJobRunner(
         runtime,
         checkpoint_path=checkpoint_path,
@@ -188,8 +264,23 @@ def command_materialize(args: argparse.Namespace) -> None:
         telemetry_log=telemetry_log,
         db_url=args.db_url,
     )
-    summaries = runner.run(mapping, dest_dir, progress_callback=combined_progress)
+    try:
+        summaries = runner.run(mapping, dest_dir, progress_callback=combined_progress)
+    except UnicodeDecodeError:
+        print("UnicodeDecodeError: retrying materialization with cp1251 encoding...")
+        runtime.global_settings.encoding = "cp1251"
+        print(f"[materialize] Fallback encoding: cp1251")
+        runner = MaterializationJobRunner(
+            runtime,
+            checkpoint_path=checkpoint_path,
+            writer_format=args.writer_format,
+            spill_threshold=args.spill_threshold,
+            telemetry_log=telemetry_log,
+            db_url=args.db_url,
+        )
+        summaries = runner.run(mapping, dest_dir, progress_callback=combined_progress)
 
+    print(f"[materialize] Output summaries: {len(summaries)}")
     total_rows = sum(summary.rows_written for summary in summaries)
     for summary in summaries:
         validation = summary.validation
@@ -199,6 +290,7 @@ def command_materialize(args: argparse.Namespace) -> None:
             f" rows={summary.rows_written} rows/s={summary.rows_per_second:,.0f}"
             f" files={len(summary.output_files)} short_rows={validation.short_rows}"
             f" long_rows={validation.long_rows} spills={spill.spills}"
+            f" output_files={summary.output_files}"
         )
         maybe_record_job_metrics(args.sqlite_db, summary)
 
@@ -414,6 +506,13 @@ def main(argv: list[str] | None = None) -> None:
         parser.print_help()
         return
     maybe_initialize_sqlite(getattr(args, "sqlite_db", None))
+
+    # --- Enforce workflow: analyze must run before review ---
+    if args.command == "review":
+        mapping_path = Path(args.mapping)
+        if not mapping_path.exists():
+            print(f"[workflow] mapping file '{mapping_path}' not found. Run 'analyze' first.")
+            return
     args.func(args)
 
 

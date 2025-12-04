@@ -33,13 +33,36 @@ class MappingService:
         self.synonyms = synonyms or SynonymDictionary.empty()
 
     def cluster(self, blocks: List[FileBlock]) -> MappingConfig:
-        grouped: Dict[Tuple[str, int, str], List[FileBlock]] = {}
+        from difflib import SequenceMatcher
+        def normalized_header_tuple(signature: SchemaSignature) -> Tuple[str, ...]:
+            if not signature.header_sample:
+                return tuple()
+            raw_headers = [cell.strip() for cell in signature.header_sample.split(signature.delimiter)]
+            return tuple(self.synonyms.normalize(h) for h in raw_headers)
+
+        # Fuzzy grouping: merge blocks with similar normalized header tuples
+        threshold = 0.85  # similarity threshold
+        clusters: List[List[FileBlock]] = []
+        header_tuples: List[Tuple[str, int, Tuple[str, ...]]] = []
         for block in blocks:
-            key = self._cluster_key(block)
-            grouped.setdefault(key.as_tuple(), []).append(block)
+            sig = block.signature
+            key = (sig.delimiter, sig.column_count, normalized_header_tuple(sig))
+            found = False
+            for i, (delim, col_count, ref_tuple) in enumerate(header_tuples):
+                if delim == key[0] and col_count == key[1]:
+                    # Compare header tuples by string similarity
+                    s1 = "|".join(ref_tuple)
+                    s2 = "|".join(key[2])
+                    if SequenceMatcher(None, s1, s2).ratio() >= threshold:
+                        clusters[i].append(block)
+                        found = True
+                        break
+            if not found:
+                header_tuples.append(key)
+                clusters.append([block])
 
         schemas: List[SchemaDefinition] = []
-        for key_tuple, block_group in grouped.items():
+        for block_group in clusters:
             signature = block_group[0].signature
             schema = self._schema_from_signature(signature)
             schemas.append(schema)

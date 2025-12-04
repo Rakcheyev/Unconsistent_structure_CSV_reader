@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, TextIO
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, TextIO, Tuple
 from uuid import uuid4
 
 from common.config import error_mode_from_policy
@@ -71,12 +71,14 @@ class MaterializationJobRunner:
         spill_threshold: int = 50_000,
         telemetry_log: Optional[Path] = None,
         db_url: Optional[str] = None,
+        max_jobs: Optional[int] = None,
     ) -> None:
         self.config = config
         self.encoding = config.global_settings.encoding
         self.errors = error_mode_from_policy(config.global_settings.error_policy)
         self.chunk_rows = max(1, config.profile.writer_chunk_rows)
-        self.max_jobs = min(2, config.profile.max_parallel_files)
+        # max_jobs can be overridden, otherwise use profile
+        self.max_jobs = max_jobs if max_jobs is not None else min(2, config.profile.max_parallel_files)
         self.checkpoints = CheckpointStore(checkpoint_path)
         self.writer_format = writer_format.lower() if writer_format else "csv"
         if self.writer_format not in self.SUPPORTED_FORMATS:
@@ -155,11 +157,16 @@ class MaterializationJobRunner:
         progress_path = dest_dir / f"{writer.slug}.materialize"
         processed_blocks = 0
         start_time = time.perf_counter()
+        seen_lines: set[tuple[str, int]] = set()
         for idx, block in enumerate(blocks):
             if idx < start_block:
                 processed_blocks += 1
                 continue
-            for row in iter_block_rows(block, self.encoding, self.errors):
+            for line_number, row in iter_block_rows(block, self.encoding, self.errors):
+                key = (str(block.file_path), line_number)
+                if key in seen_lines:
+                    continue
+                seen_lines.add(key)
                 spooler.push(row)
                 processed_rows += 1
                 if (
@@ -229,22 +236,27 @@ class MaterializationJobRunner:
         schema_name: str,
         spill_rows: int,
     ) -> None:
-        if total_rows <= 0 and processed_rows > 0:
-            total_rows = processed_rows
+        # total_rows for materialization is often a rough estimate; to avoid
+        # confusing "8M/57K" style progress, we only trust it when it is
+        # explicitly positive and relatively small. Otherwise we drop it and
+        # compute ETA based solely on processed_rows.
         eta = None
         rows_per_second = None
-        if processed_rows and total_rows:
-            remaining = max(total_rows - processed_rows, 0)
+        effective_total = total_rows if (total_rows and total_rows > 0 and total_rows <= 10_000_000) else 0
+
+        if processed_rows > 0:
             elapsed = time.perf_counter() - start_time
-            if elapsed > 0 and processed_rows > 0:
+            if elapsed > 0:
                 rate = processed_rows / elapsed
                 if rate > 0:
-                    eta = remaining / rate
                     rows_per_second = rate
+                    if effective_total:
+                        remaining = max(effective_total - processed_rows, 0)
+                        eta = remaining / rate
         progress = FileProgress(
             file_path=file_path,
             processed_rows=processed_rows,
-            total_rows=total_rows,
+            total_rows=effective_total or 0,
             current_phase="materialize",
             eta_seconds=eta,
             schema_id=schema_id,
@@ -428,7 +440,8 @@ class BaseSchemaWriter(ABC):
 
     def _open_stream(self, path: Path, *, append: bool) -> None:
         mode = "a" if append else "w"
-        self._handle = path.open(mode, newline="", encoding=self.encoding, errors=self.errors)
+        # Always write UTF-8 for output files so tools can read them reliably.
+        self._handle = path.open(mode, newline="", encoding="utf-8", errors=self.errors)
         self._after_open(append)
 
     def _path_for_chunk(self, chunk_index: int) -> Path:
@@ -689,7 +702,7 @@ class CheckpointStore:
             json.dump(self._state, handle, indent=2)
 
 
-def iter_block_rows(block: FileBlock, encoding: str, errors: str) -> Iterable[List[str]]:
+def iter_block_rows(block: FileBlock, encoding: str, errors: str) -> Iterable[Tuple[int, List[str]]]:
     delimiter = block.signature.delimiter or ","
     header_sample = (block.signature.header_sample or "").strip()
     with block.file_path.open("r", encoding=encoding, errors=errors) as handle:
@@ -701,7 +714,8 @@ def iter_block_rows(block: FileBlock, encoding: str, errors: str) -> Iterable[Li
             stripped = line.rstrip("\n\r")
             if header_sample and line_number == block.start_line and stripped.strip() == header_sample:
                 continue
-            yield [value.strip() for value in stripped.split(delimiter)]
+            values = [value.strip() for value in stripped.split(delimiter)]
+            yield line_number, values
 
 
 def slugify(value: str) -> str:

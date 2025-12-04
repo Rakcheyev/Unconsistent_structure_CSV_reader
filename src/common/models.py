@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from uuid import UUID, uuid4
 
 
@@ -62,11 +62,56 @@ class SchemaDefinition:
 
 
 @dataclass(slots=True)
+class HeaderVariant:
+    """Observed header for a specific file/column with a light type profile.
+
+    This is populated during Phase 1 and reused by header clustering/offset detection.
+    """
+
+    file_path: Path
+    column_index: int
+    raw_name: str
+    normalized_name: str
+    detected_types: Dict[str, int] = field(default_factory=dict)
+    sample_values: Set[str] = field(default_factory=set)
+    row_count: int = 0
+
+
+@dataclass(slots=True)
+class HeaderCluster:
+    """Cluster of semantically equivalent headers (synonyms, fuzzy matches)."""
+
+    cluster_id: UUID = field(default_factory=uuid4)
+    canonical_name: str = ""
+    variants: List[HeaderVariant] = field(default_factory=list)
+    confidence_score: float = 1.0
+    needs_review: bool = False
+
+
+@dataclass(slots=True)
+class SchemaMappingEntry:
+    """Mapping from a concrete file/column to a canonical header position.
+
+    Used by Phase 2 to realign rows when headers shift between files.
+    """
+
+    file_path: Path
+    source_index: int
+    canonical_name: str
+    target_index: int
+    offset_from_index: Optional[int] = None
+    offset_reason: Optional[str] = None
+    offset_confidence: Optional[float] = None
+
+
+@dataclass(slots=True)
 class MappingConfig:
     """Serializable mapping between file blocks and schemas."""
 
     blocks: List[FileBlock] = field(default_factory=list)
     schemas: List[SchemaDefinition] = field(default_factory=list)
+    header_clusters: List[HeaderCluster] = field(default_factory=list)
+    schema_mapping: List[SchemaMappingEntry] = field(default_factory=list)
 
     def to_dict(self, *, include_samples: bool = False) -> Dict[str, object]:
         """Return a JSON-ready dictionary without copying sample payloads unless requested."""
@@ -124,7 +169,7 @@ class ProfileSettings:
     min_gap_lines: int
     max_parallel_files: int
     sample_values_cap: int
-    writer_chunk_rows: int
+    writer_chunk_rows: int = 10000  # Recommended for CSV: 10k rows per chunk
 
 
 @dataclass(slots=True)

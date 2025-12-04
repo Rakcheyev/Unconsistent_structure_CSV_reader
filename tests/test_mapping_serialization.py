@@ -5,10 +5,13 @@ from pathlib import Path
 from common.models import (
     ColumnStats,
     FileBlock,
+    HeaderCluster,
+    HeaderVariant,
     MappingConfig,
     SchemaColumn,
     SchemaDefinition,
     SchemaSignature,
+    SchemaMappingEntry,
 )
 
 
@@ -24,13 +27,45 @@ def _build_mapping() -> MappingConfig:
         signature=SchemaSignature(columns={0: stats}),
     )
     schema = SchemaDefinition(columns=[SchemaColumn(index=0, raw_name="col0")])
-    return MappingConfig(blocks=[block], schemas=[schema])
+
+    header_variant = HeaderVariant(
+        file_path=Path("input.csv"),
+        column_index=0,
+        raw_name="col0",
+        normalized_name="col0_norm",
+        detected_types={"str": 2},
+        sample_values={"foo", "bar"},
+        row_count=2,
+    )
+    header_cluster = HeaderCluster(
+        canonical_name="col0_norm",
+        variants=[header_variant],
+    )
+
+    mapping_entry = SchemaMappingEntry(
+        file_path=Path("input.csv"),
+        source_index=0,
+        canonical_name="col0_norm",
+        target_index=0,
+    )
+
+    return MappingConfig(
+        blocks=[block],
+        schemas=[schema],
+        header_clusters=[header_cluster],
+        schema_mapping=[mapping_entry],
+    )
 
 
 def test_mapping_config_to_dict_excludes_samples_by_default():
     payload = _build_mapping().to_dict()
     column_payload = payload["blocks"][0]["signature"]["columns"]["0"]
     assert "sample_values" not in column_payload
+
+    # HeaderVariant sample values should also be excluded by default
+    cluster_payload = payload["header_clusters"][0]
+    variant_payload = cluster_payload["variants"][0]
+    assert "sample_values" not in variant_payload
 
 
 def test_mapping_config_round_trip_with_samples():
@@ -39,7 +74,28 @@ def test_mapping_config_round_trip_with_samples():
     column_payload = payload["blocks"][0]["signature"]["columns"]["0"]
     assert sorted(column_payload["sample_values"]) == ["bar", "foo"]
 
+    # HeaderVariant sample values should be present when include_samples=True
+    cluster_payload = payload["header_clusters"][0]
+    variant_payload = cluster_payload["variants"][0]
+    assert sorted(variant_payload["sample_values"]) == ["bar", "foo"]
+
     restored = MappingConfig.from_dict(payload)
     restored_stats = restored.blocks[0].signature.columns[0]
     assert restored_stats.sample_values == {"bar", "foo"}
     assert restored.schemas[0].columns[0].raw_name == "col0"
+
+    # Header clusters and schema mapping should also round-trip
+    assert len(restored.header_clusters) == 1
+    restored_cluster = restored.header_clusters[0]
+    assert restored_cluster.canonical_name == "col0_norm"
+    assert len(restored_cluster.variants) == 1
+    restored_variant = restored_cluster.variants[0]
+    assert restored_variant.raw_name == "col0"
+    assert restored_variant.normalized_name == "col0_norm"
+    assert restored_variant.sample_values == {"bar", "foo"}
+
+    assert len(restored.schema_mapping) == 1
+    restored_entry = restored.schema_mapping[0]
+    assert restored_entry.canonical_name == "col0_norm"
+    assert restored_entry.source_index == 0
+    assert restored_entry.target_index == 0

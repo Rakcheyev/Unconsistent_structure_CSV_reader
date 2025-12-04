@@ -8,18 +8,26 @@ from uuid import UUID
 from .models import (
     ColumnStats,
     FileBlock,
+    HeaderCluster,
+    HeaderVariant,
     MappingConfig,
     SchemaDefinition,
     SchemaSignature,
     SchemaColumn,
+    SchemaMappingEntry,
 )
 
 
 def mapping_to_dict(mapping: MappingConfig, *, include_samples: bool = False) -> Dict[str, object]:
-    return {
+    payload: Dict[str, object] = {
         "blocks": [serialize_block(block, include_samples) for block in mapping.blocks],
         "schemas": [serialize_schema(schema) for schema in mapping.schemas],
     }
+    if mapping.header_clusters:
+        payload["header_clusters"] = [serialize_header_cluster(cluster, include_samples) for cluster in mapping.header_clusters]
+    if mapping.schema_mapping:
+        payload["schema_mapping"] = [serialize_schema_mapping_entry(entry) for entry in mapping.schema_mapping]
+    return payload
 
 
 def mapping_from_dict(data: Dict[str, object]) -> MappingConfig:
@@ -27,7 +35,92 @@ def mapping_from_dict(data: Dict[str, object]) -> MappingConfig:
     schemas_data = data.get("schemas", [])
     blocks = [deserialize_block(item) for item in blocks_data]
     schemas = [deserialize_schema(item) for item in schemas_data]
-    return MappingConfig(blocks=blocks, schemas=schemas)
+    header_clusters_data = data.get("header_clusters", [])
+    schema_mapping_data = data.get("schema_mapping", [])
+    header_clusters = [deserialize_header_cluster(item) for item in header_clusters_data]
+    schema_mapping = [deserialize_schema_mapping_entry(item) for item in schema_mapping_data]
+    return MappingConfig(
+        blocks=blocks,
+        schemas=schemas,
+        header_clusters=header_clusters,
+        schema_mapping=schema_mapping,
+    )
+
+
+def serialize_header_variant(variant: HeaderVariant, include_samples: bool) -> Dict[str, object]:
+    payload: Dict[str, object] = {
+        "file_path": str(variant.file_path),
+        "column_index": variant.column_index,
+        "raw_name": variant.raw_name,
+        "normalized_name": variant.normalized_name,
+        "detected_types": dict(variant.detected_types),
+        "row_count": variant.row_count,
+    }
+    if include_samples and variant.sample_values:
+        payload["sample_values"] = sorted(variant.sample_values)
+    return payload
+
+
+def deserialize_header_variant(data: Dict[str, object]) -> HeaderVariant:
+    sample_values = set(str(item) for item in data.get("sample_values", []))
+    return HeaderVariant(
+        file_path=Path(str(data["file_path"])),
+        column_index=int(data["column_index"]),
+        raw_name=str(data.get("raw_name", "")),
+        normalized_name=str(data.get("normalized_name", "")),
+        detected_types={str(k): int(v) for k, v in data.get("detected_types", {}).items()},
+        sample_values=sample_values,
+        row_count=int(data.get("row_count", 0)),
+    )
+
+
+def serialize_header_cluster(cluster: HeaderCluster, include_samples: bool) -> Dict[str, object]:
+    return {
+        "cluster_id": str(cluster.cluster_id),
+        "canonical_name": cluster.canonical_name,
+        "variants": [serialize_header_variant(v, include_samples) for v in cluster.variants],
+        "confidence_score": cluster.confidence_score,
+        "needs_review": cluster.needs_review,
+    }
+
+
+def deserialize_header_cluster(data: Dict[str, object]) -> HeaderCluster:
+    variants_data = data.get("variants", [])
+    return HeaderCluster(
+        cluster_id=UUID(str(data.get("cluster_id", UUID(int=0)))) if data.get("cluster_id") else UUID(int=0),
+        canonical_name=str(data.get("canonical_name", "")),
+        variants=[deserialize_header_variant(item) for item in variants_data],
+        confidence_score=float(data.get("confidence_score", 1.0)),
+        needs_review=bool(data.get("needs_review", False)),
+    )
+
+
+def serialize_schema_mapping_entry(entry: SchemaMappingEntry) -> Dict[str, object]:
+    payload: Dict[str, object] = {
+        "file_path": str(entry.file_path),
+        "source_index": entry.source_index,
+        "canonical_name": entry.canonical_name,
+        "target_index": entry.target_index,
+    }
+    if entry.offset_from_index is not None:
+        payload["offset_from_index"] = entry.offset_from_index
+    if entry.offset_reason is not None:
+        payload["offset_reason"] = entry.offset_reason
+    if entry.offset_confidence is not None:
+        payload["offset_confidence"] = entry.offset_confidence
+    return payload
+
+
+def deserialize_schema_mapping_entry(data: Dict[str, object]) -> SchemaMappingEntry:
+    return SchemaMappingEntry(
+        file_path=Path(str(data["file_path"])),
+        source_index=int(data["source_index"]),
+        canonical_name=str(data.get("canonical_name", "")),
+        target_index=int(data["target_index"]),
+        offset_from_index=int(data["offset_from_index"]) if "offset_from_index" in data else None,
+        offset_reason=str(data["offset_reason"]) if "offset_reason" in data else None,
+        offset_confidence=float(data["offset_confidence"]) if "offset_confidence" in data else None,
+    )
 
 
 def serialize_block(block: FileBlock, include_samples: bool) -> Dict[str, object]:

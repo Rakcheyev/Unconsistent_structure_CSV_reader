@@ -56,7 +56,8 @@ class MaterializationPlanner:
 
     @staticmethod
     def write_plan(plan: Iterable[PlanEntry], path: Path) -> None:
-        payload = [entry.__dict__ for entry in plan]
+        from dataclasses import asdict
+        payload = [asdict(entry) for entry in plan]
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 

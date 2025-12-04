@@ -1,0 +1,22 @@
+[
+  {
+    "schema_id": "0cd3f4de-1640-4869-ab95-681e06c52108",
+    "schema_name": "ENCODING:cp1251",
+    "block_count": 846,
+    "estimated_rows": 8460000,
+    "output_path": "output_data\\encoding_cp1251.csv",
+    "source_files": [
+      "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv"
+    ]
+  },
+  {
+    "schema_id": "be61438f-770c-47cb-a8ff-3edec9d10ae8",
+    "schema_name": "ENCODING:cp1251",
+    "block_count": 1,
+    "estimated_rows": 10000,
+    "output_path": "output_data\\encoding_cp1251.csv",
+    "source_files": [
+      "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv"
+    ]
+  }
+]
