@@ -1,6 +1,6 @@
 [
   {
-    "schema_id": "0cd3f4de-1640-4869-ab95-681e06c52108",
+    "schema_id": "273f7060-c14f-40f5-a399-e14861ba2398",
     "schema_name": "ENCODING:cp1251",
     "block_count": 846,
     "estimated_rows": 8460000,
@@ -10,7 +10,7 @@
     ]
   },
   {
-    "schema_id": "be61438f-770c-47cb-a8ff-3edec9d10ae8",
+    "schema_id": "a947f246-6eef-49d5-bba9-783135d02588",
     "schema_name": "ENCODING:cp1251",
     "block_count": 1,
     "estimated_rows": 10000,

@@ -57,6 +57,17 @@ class JobSummary:
         )
 
 
+class RowNormalizer:
+    """Row-level normalizer hook.
+
+    For now this is a no-op that preserves values while giving us a
+    single place to plug offset-fix rules (date/url/numeric) later.
+    """
+
+    def normalize(self, row: List[str], schema: SchemaDefinition) -> List[str]:
+        return row
+
+
 class MaterializationJobRunner:
     """Processes schemas into normalized datasets with validation + telemetry."""
 
@@ -99,6 +110,9 @@ class MaterializationJobRunner:
         dest_dir.mkdir(parents=True, exist_ok=True)
         max_jobs = max_jobs or self.max_jobs or 1
         summaries: List[JobSummary] = []
+        # Global dedup across all schemas for strict 1:1 invariant per source line.
+        # Key: (str(file_path), line_number)
+        global_seen_lines: set[tuple[str, int]] = set()
         schema_blocks: Dict[str, List[FileBlock]] = {}
         for block in mapping.blocks:
             if not block.schema_id:
@@ -119,6 +133,7 @@ class MaterializationJobRunner:
                         blocks,
                         dest_dir,
                         progress_callback,
+                        global_seen_lines,
                     )
                 )
             for future in futures:
@@ -131,6 +146,7 @@ class MaterializationJobRunner:
         blocks: List[FileBlock],
         dest_dir: Path,
         progress_callback: Optional[Callable[[FileProgress], None]],
+        global_seen_lines: Optional[set[tuple[str, int]]] = None,
     ) -> JobSummary:
         blocks.sort(key=lambda b: (str(b.file_path), b.start_line))
         schema_id = str(schema.id)
@@ -151,12 +167,14 @@ class MaterializationJobRunner:
             threshold=self.spill_threshold,
             spool_dir=dest_dir / "_spool" / schema_id,
         )
+        normalizer = RowNormalizer()
         total_estimated_rows = sum(self._estimate_block_rows(block) for block in blocks)
         processed_rows = writer.total_rows
         next_progress_emit = processed_rows + self.progress_granularity
         progress_path = dest_dir / f"{writer.slug}.materialize"
         processed_blocks = 0
         start_time = time.perf_counter()
+        # Local dedup within schema plus optional global dedup across schemas.
         seen_lines: set[tuple[str, int]] = set()
         for idx, block in enumerate(blocks):
             if idx < start_block:
@@ -166,8 +184,13 @@ class MaterializationJobRunner:
                 key = (str(block.file_path), line_number)
                 if key in seen_lines:
                     continue
+                if global_seen_lines is not None and key in global_seen_lines:
+                    continue
                 seen_lines.add(key)
-                spooler.push(row)
+                if global_seen_lines is not None:
+                    global_seen_lines.add(key)
+                normalized_row = normalizer.normalize(row, schema)
+                spooler.push(normalized_row)
                 processed_rows += 1
                 if (
                     progress_callback

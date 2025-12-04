@@ -63,8 +63,21 @@ class MappingService:
 
         schemas: List[SchemaDefinition] = []
         for block_group in clusters:
+            # First block in group defines the baseline header/width and has priority.
+            # Column count can grow when other files add extra columns, but must
+            # never shrink below the first header's width.
             signature = block_group[0].signature
-            schema = self._schema_from_signature(signature)
+            base_schema = self._schema_from_signature(signature)
+            max_columns = len(base_schema.columns)
+            # Ensure we respect additional columns observed in other blocks
+            # (e.g., extra trailing fields in some files).
+            for block in block_group[1:]:
+                sig = block.signature
+                if sig.column_count and sig.column_count > max_columns:
+                    max_columns = sig.column_count
+            # Rebuild schema with the final column count, using the first
+            # header row as the authoritative header for existing positions.
+            schema = self._schema_from_signature(signature, forced_columns=max_columns)
             schemas.append(schema)
             for block in block_group:
                 block.schema_id = schema.id
@@ -81,12 +94,12 @@ class MappingService:
             header_hash=header_hash,
         )
 
-    def _schema_from_signature(self, signature: SchemaSignature) -> SchemaDefinition:
+    def _schema_from_signature(self, signature: SchemaSignature, forced_columns: int | None = None) -> SchemaDefinition:
         columns: List[SchemaColumn] = []
         header_values: List[str] = []
         if signature.header_sample:
             header_values = [cell.strip() for cell in signature.header_sample.split(signature.delimiter)]
-        total_columns = signature.column_count or len(header_values) or len(signature.columns)
+        total_columns = forced_columns or signature.column_count or len(header_values) or len(signature.columns)
         for idx in range(total_columns):
             raw_name = header_values[idx] if idx < len(header_values) else f"column_{idx + 1}"
             normalized = self.synonyms.normalize(raw_name)
