@@ -15,6 +15,7 @@ from common.models import (
     FileProgress,
     MappingConfig,
     ProfileSettings,
+    ResourceLimits,
     RuntimeConfig,
     SchemaColumn,
     SchemaDefinition,
@@ -22,6 +23,7 @@ from common.models import (
     GlobalSettings,
 )
 from core.materialization.runner import MaterializationJobRunner
+from core.resources import ResourceManager
 
 
 def build_runtime(chunk_rows: int = 2) -> RuntimeConfig:
@@ -69,7 +71,6 @@ def test_materialization_runner_writes_chunked_files(tmp_path: Path) -> None:
 
     runner = MaterializationJobRunner(
         build_runtime(chunk_rows=2),
-        checkpoint_path=tmp_path / "checkpoint.json",
         writer_format="csv",
         spill_threshold=1,
     )
@@ -117,7 +118,6 @@ def test_materialization_runner_parquet_writer(tmp_path: Path) -> None:
     )
     runner = MaterializationJobRunner(
         build_runtime(chunk_rows=2),
-        checkpoint_path=tmp_path / "checkpoint_parquet.json",
         writer_format="parquet",
     )
     summaries = runner.run(MappingConfig(blocks=[block], schemas=[schema]), dest_dir=tmp_path / "out", max_jobs=1)
@@ -151,7 +151,6 @@ def test_materialization_runner_database_writer(tmp_path: Path) -> None:
     db_path = tmp_path / "warehouse.db"
     runner = MaterializationJobRunner(
         build_runtime(chunk_rows=2),
-        checkpoint_path=tmp_path / "checkpoint_db.json",
         writer_format="database",
         db_url=f"sqlite:///{db_path}",
     )
@@ -185,7 +184,6 @@ def test_materialization_runner_emits_progress(tmp_path: Path) -> None:
 
     runner = MaterializationJobRunner(
         build_runtime(chunk_rows=2),
-        checkpoint_path=tmp_path / "checkpoint_progress.json",
         writer_format="csv",
     )
     runner.run(
@@ -246,7 +244,6 @@ def test_materialization_runner_enforces_canonical_contract(tmp_path: Path) -> N
 
     runner = MaterializationJobRunner(
         build_runtime(chunk_rows=2),
-        checkpoint_path=tmp_path / "checkpoint_contract.json",
         writer_format="csv",
         canonical_registry=registry,
     )
@@ -258,3 +255,36 @@ def test_materialization_runner_enforces_canonical_contract(tmp_path: Path) -> N
 
     assert summary.validation.missing_required == 1
     assert summary.validation.type_mismatches == 1
+
+
+def test_materialization_runner_uses_resource_manager_scratch(tmp_path: Path) -> None:
+    input_csv = tmp_path / "orders.csv"
+    input_csv.write_text("id,total\n1,10\n", encoding="utf-8")
+    schema_id = uuid4()
+    schema = SchemaDefinition(
+        id=schema_id,
+        name="orders",
+        columns=[
+            SchemaColumn(index=0, raw_name="id", normalized_name="id"),
+            SchemaColumn(index=1, raw_name="total", normalized_name="total"),
+        ],
+    )
+    block = FileBlock(
+        file_path=input_csv,
+        block_id=0,
+        start_line=0,
+        end_line=1,
+        signature=SchemaSignature(delimiter=",", column_count=2, header_sample="id,total"),
+        schema_id=schema_id,
+    )
+    scratch_root = tmp_path / "scratch"
+    resource_manager = ResourceManager(ResourceLimits(temp_dir=str(scratch_root), max_workers=1))
+    runner = MaterializationJobRunner(
+        build_runtime(chunk_rows=1),
+        writer_format="csv",
+        job_id="job-test",
+        resource_manager=resource_manager,
+    )
+    runner.run(MappingConfig(blocks=[block], schemas=[schema]), dest_dir=tmp_path / "out", max_jobs=1)
+    expected_dir = scratch_root / "job-test" / "materialize" / "orders"
+    assert expected_dir.exists()

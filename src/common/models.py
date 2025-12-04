@@ -345,6 +345,16 @@ class GlobalSettings:
 
 
 @dataclass(slots=True)
+class ResourceLimits:
+    """Optional hardware budgets enforced by the ResourceManager."""
+
+    memory_mb: Optional[int] = None
+    spill_mb: Optional[int] = None
+    max_workers: Optional[int] = None
+    temp_dir: str = "artifacts/tmp"
+
+
+@dataclass(slots=True)
 class ProfileSettings:
     """Profile-specific resource limits."""
 
@@ -354,6 +364,7 @@ class ProfileSettings:
     max_parallel_files: int
     sample_values_cap: int
     writer_chunk_rows: int = 10000  # Recommended for CSV: 10k rows per chunk
+    resource_limits: ResourceLimits = field(default_factory=ResourceLimits)
 
 
 @dataclass(slots=True)
@@ -429,4 +440,27 @@ class JobProgressEvent:
     eta_seconds: Optional[float] = None
     rows_per_second: Optional[float] = None
     spill_rows: Optional[int] = None
+    created_at: float = 0.0
+
+
+@dataclass(slots=True)
+class JobStatusRecord:
+    """Current status snapshot for a long-running job."""
+
+    job_id: str
+    state: str
+    detail: Optional[str] = None
+    last_error: Optional[str] = None
+    metadata: Dict[str, object] = field(default_factory=dict)
+    created_at: float = 0.0
+    updated_at: float = 0.0
+
+
+@dataclass(slots=True)
+class JobEventRecord:
+    """Single state transition emitted by the job state machine."""
+
+    job_id: str
+    state: str
+    detail: Optional[str] = None
     created_at: float = 0.0

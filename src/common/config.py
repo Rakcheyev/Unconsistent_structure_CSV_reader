@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .models import GlobalSettings, ProfileSettings, RuntimeConfig
+from .models import GlobalSettings, ProfileSettings, ResourceLimits, RuntimeConfig
 
 DEFAULT_CONFIG_PATH = Path("config/defaults.json")
 
@@ -60,6 +60,15 @@ def load_runtime_config(
     if missing:
         raise ValueError(f"Profile '{profile}' missing fields: {missing}")
 
+    limits_data = profile_data.get("resource_limits", {}) or {}
+    resource_limits = ResourceLimits(
+        memory_mb=_optional_positive_int(limits_data.get("memory_mb")),
+        spill_mb=_optional_positive_int(limits_data.get("spill_mb")),
+        max_workers=_optional_positive_int(limits_data.get("max_workers")),
+        temp_dir=str(limits_data.get("temp_dir", ResourceLimits().temp_dir)).strip()
+        or ResourceLimits().temp_dir,
+    )
+
     profile_settings = ProfileSettings(
         description=str(profile_data["description"]),
         block_size=int(profile_data["block_size"]),
@@ -67,6 +76,7 @@ def load_runtime_config(
         max_parallel_files=max(1, int(profile_data["max_parallel_files"])),
         sample_values_cap=max(1, int(profile_data["sample_values_cap"])),
         writer_chunk_rows=int(profile_data["writer_chunk_rows"]),
+        resource_limits=resource_limits,
     )
 
     return RuntimeConfig(global_settings=global_settings, profile=profile_settings)
@@ -76,3 +86,13 @@ def error_mode_from_policy(policy: str) -> str:
     """Translate human-friendly error policy into Python's encoding error handler."""
 
     return "strict" if policy.lower() in {"fail-fast", "strict"} else "replace"
+
+
+def _optional_positive_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        num = int(value)
+    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
+        raise ValueError(f"Expected integer for resource limit, got {value!r}") from exc
+    return num if num > 0 else None

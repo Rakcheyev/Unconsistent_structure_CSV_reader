@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 import csv
 from datetime import date, datetime
 import json
+import math
 import sqlite3
 import threading
 import time
@@ -30,6 +31,8 @@ from common.models import (
     ValidationSummary,
 )
 from common.text import slugify
+from core.jobs import CheckpointRegistry, JobState, JobStateMachine
+from core.resources import ResourceManager
 from core.validation.canonical import resolve_canonical_schema
 
 try:  # pragma: no cover - optional dependency validated via tests
@@ -225,13 +228,16 @@ class MaterializationJobRunner:
         self,
         config: RuntimeConfig,
         *,
-        checkpoint_path: Optional[Path] = None,
+        checkpoint_registry: CheckpointRegistry | None = None,
+        job_id: str | None = None,
         writer_format: str = "csv",
         spill_threshold: int = 50_000,
         telemetry_log: Optional[Path] = None,
         db_url: Optional[str] = None,
         max_jobs: Optional[int] = None,
         canonical_registry: CanonicalSchemaRegistry | None = None,
+        job_tracker: JobStateMachine | None = None,
+        resource_manager: ResourceManager | None = None,
     ) -> None:
         self.config = config
         self.encoding = config.global_settings.encoding
@@ -239,7 +245,16 @@ class MaterializationJobRunner:
         self.chunk_rows = max(1, config.profile.writer_chunk_rows)
         # max_jobs can be overridden, otherwise use profile
         self.max_jobs = max_jobs if max_jobs is not None else min(2, config.profile.max_parallel_files)
-        self.checkpoints = CheckpointStore(checkpoint_path)
+        self.job_tracker = job_tracker
+        self.resource_manager = resource_manager
+        self.job_id = job_id or (job_tracker.job_id if job_tracker else None)
+        if checkpoint_registry is not None and not self.job_id:
+            raise ValueError("job_id is required when using checkpoint_registry")
+        self.checkpoints = CheckpointStore(
+            registry=checkpoint_registry,
+            job_id=self.job_id,
+            phase="materialize",
+        )
         self.writer_format = writer_format.lower() if writer_format else "csv"
         if self.writer_format not in self.SUPPORTED_FORMATS:
             raise ValueError(f"Unsupported writer format '{writer_format}'.")
@@ -259,40 +274,51 @@ class MaterializationJobRunner:
     ) -> List[JobSummary]:
         dest_dir.mkdir(parents=True, exist_ok=True)
         max_jobs = max_jobs or self.max_jobs or 1
+        if self.resource_manager:
+            max_jobs = self.resource_manager.plan_workers(max_jobs)
         summaries: List[JobSummary] = []
-        # Global dedup across all schemas for strict 1:1 invariant per source line.
-        # Key: (str(file_path), line_number)
-        global_seen_lines: set[tuple[str, int]] = set()
         schema_blocks: Dict[str, List[FileBlock]] = {}
         for block in mapping.blocks:
             if not block.schema_id:
                 continue
             schema_blocks.setdefault(str(block.schema_id), []).append(block)
         schema_map = {str(schema.id): schema for schema in mapping.schemas}
-
         schema_mapping_entries = list(mapping.schema_mapping)
         column_profiles = list(mapping.column_profiles)
-        with ThreadPoolExecutor(max_workers=max_jobs) as executor:
-            futures = []
-            for schema_id, blocks in schema_blocks.items():
-                schema = schema_map.get(schema_id)
-                if not schema:
-                    continue
-                futures.append(
-                    executor.submit(
-                        self._process_schema,
-                        schema,
-                        blocks,
-                        dest_dir,
-                        progress_callback,
-                        global_seen_lines,
-                        schema_mapping_entries,
-                        column_profiles,
+        self._transition(JobState.MATERIALIZING, detail=f"schemas={len(schema_blocks)}")
+        try:
+            # Global dedup across schemas to enforce strict 1:1 mapping per line.
+            global_seen_lines: set[tuple[str, int]] = set()
+            with ThreadPoolExecutor(max_workers=max_jobs) as executor:
+                futures = []
+                for schema_id, blocks in schema_blocks.items():
+                    schema = schema_map.get(schema_id)
+                    if not schema:
+                        continue
+                    futures.append(
+                        executor.submit(
+                            self._process_schema,
+                            schema,
+                            blocks,
+                            dest_dir,
+                            progress_callback,
+                            global_seen_lines,
+                            schema_mapping_entries,
+                            column_profiles,
+                        )
                     )
-                )
-            for future in futures:
-                summaries.append(future.result())
-        return summaries
+                for future in futures:
+                    summaries.append(future.result())
+            self._transition(JobState.VALIDATING, detail="Aggregating validation summaries")
+            total_rows = sum(summary.rows_written for summary in summaries)
+            self._transition(
+                JobState.DONE,
+                detail=f"schemas={len(summaries)} rows={total_rows}",
+            )
+            return summaries
+        except Exception as exc:
+            self._mark_failed(str(exc))
+            raise
 
     def _process_schema(
         self,
@@ -323,7 +349,8 @@ class MaterializationJobRunner:
         spooler = SpillBuffer(
             writer=writer,
             threshold=self.spill_threshold,
-            spool_dir=dest_dir / "_spool" / schema_id,
+            spool_dir=self._spool_dir_for_schema(dest_dir, schema),
+            resource_manager=self.resource_manager,
         )
         normalizer = RowNormalizer(schema_mappings, column_profiles=column_profiles)
         total_estimated_rows = sum(self._estimate_block_rows(block) for block in blocks)
@@ -400,6 +427,14 @@ class MaterializationJobRunner:
         self._emit_telemetry(summary)
         return summary
 
+    def _spool_dir_for_schema(self, dest_dir: Path, schema: SchemaDefinition) -> Path:
+        schema_id = str(schema.id)
+        if self.resource_manager:
+            schema_slug = slugify(schema.name or schema_id)
+            job_key = self.job_id or "materialize"
+            return self.resource_manager.scratch_dir(job_key, "materialize", schema_slug)
+        return dest_dir / "_spool" / schema_id
+
     @staticmethod
     def _estimate_block_rows(block: FileBlock) -> int:
         if block.end_line < block.start_line:
@@ -464,6 +499,18 @@ class MaterializationJobRunner:
         with self.telemetry_log.open("a", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False)
             handle.write("\n")
+
+    def _transition(self, state: JobState, detail: str | None = None) -> None:
+        if not self.job_tracker:
+            return
+        if state == JobState.FAILED:
+            self.job_tracker.mark_failed(detail=detail)
+            return
+        self.job_tracker.transition(state, detail=detail)
+
+    def _mark_failed(self, detail: str | None = None) -> None:
+        if self.job_tracker:
+            self.job_tracker.mark_failed(detail=detail)
 
 
 def build_schema_writer(
@@ -898,10 +945,18 @@ def resolve_sqlite_path(db_url: str) -> Path:
 class SpillBuffer:
     """Back-pressure buffer that spills to temp JSONL files when saturated."""
 
-    def __init__(self, *, writer: BaseSchemaWriter, threshold: int, spool_dir: Path) -> None:
+    def __init__(
+        self,
+        *,
+        writer: BaseSchemaWriter,
+        threshold: int,
+        spool_dir: Path,
+        resource_manager: ResourceManager | None = None,
+    ) -> None:
         self.writer = writer
         self.threshold = max(1, threshold)
         self.spool_dir = spool_dir
+        self.resource_manager = resource_manager
         self.buffer: List[NormalizedRow] = []
         self.telemetry = SpillMetrics()
 
@@ -932,7 +987,16 @@ class SpillBuffer:
         self.telemetry.rows_spilled += len(self.buffer)
         self.telemetry.bytes_spilled += spill_path.stat().st_size
         self.buffer.clear()
-        self._drain_spill(spill_path)
+        disk_lease = None
+        if self.resource_manager:
+            bytes_written = max(1, spill_path.stat().st_size)
+            disk_mb = max(1, math.ceil(bytes_written / (1024 * 1024)))
+            disk_lease = self.resource_manager.reserve(disk_mb=disk_mb)
+        try:
+            self._drain_spill(spill_path)
+        finally:
+            if disk_lease is not None:
+                disk_lease.release()
 
     def _drain_spill(self, path: Path) -> None:
         with path.open("r", encoding="utf-8") as handle:
@@ -951,46 +1015,76 @@ class SpillBuffer:
 
 
 class CheckpointStore:
-    """Thread-safe checkpoint storage (JSON)."""
+    """Thread-safe adapter over CheckpointRegistry for schema snapshots."""
 
-    def __init__(self, path: Optional[Path]) -> None:
-        self.path = path
+    def __init__(
+        self,
+        *,
+        registry: CheckpointRegistry | None,
+        job_id: str | None,
+        phase: str,
+    ) -> None:
+        self._registry = registry
+        self._job_id = job_id
+        self._phase = phase
         self._lock = threading.Lock()
-        self._state = self._load()
+        self._state, self._active_schema = self._load()
 
     def get(self, schema_id: str) -> Dict[str, object]:
-        return dict(self._state.get(schema_id, {}))
+        if not self._enabled:
+            return {}
+        with self._lock:
+            snapshot = self._state.get(schema_id, {})
+            return dict(snapshot)
 
     def update(self, schema_id: str, snapshot: Dict[str, object]) -> None:
-        if not self.path:
+        if not self._enabled:
             return
         with self._lock:
-            self._state[schema_id] = snapshot
-            self._persist()
+            self._state[schema_id] = dict(snapshot)
+            self._active_schema = schema_id
+            self._persist_locked()
 
     def clear(self, schema_id: str) -> None:
-        if not self.path:
+        if not self._enabled:
             return
         with self._lock:
             if schema_id in self._state:
                 del self._state[schema_id]
-                self._persist()
+                if self._active_schema == schema_id:
+                    self._active_schema = None
+                self._persist_locked()
 
-    def _load(self) -> Dict[str, Dict[str, object]]:
-        if not self.path or not self.path.exists():
-            return {}
-        try:
-            with self.path.open("r", encoding="utf-8") as handle:
-                return json.load(handle)
-        except json.JSONDecodeError:
-            return {}
+    @property
+    def _enabled(self) -> bool:
+        return self._registry is not None and bool(self._job_id)
 
-    def _persist(self) -> None:
-        if not self.path:
+    def _load(self) -> tuple[Dict[str, Dict[str, object]], str | None]:
+        if not self._enabled or self._registry is None or not self._job_id:
+            return {}, None
+        payload = self._registry.load(self._job_id, self._phase)
+        if not isinstance(payload, dict):
+            return {}, None
+        raw_state = payload.get("schemas")
+        state: Dict[str, Dict[str, object]] = {}
+        if isinstance(raw_state, dict):
+            for key, value in raw_state.items():
+                if isinstance(value, dict):
+                    state[str(key)] = dict(value)
+        active_schema = payload.get("active_schema")
+        return state, str(active_schema) if isinstance(active_schema, str) else None
+
+    def _persist_locked(self) -> None:
+        if not self._enabled or self._registry is None or not self._job_id:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("w", encoding="utf-8") as handle:
-            json.dump(self._state, handle, indent=2)
+        if self._state:
+            payload = {
+                "schemas": self._state,
+                "active_schema": self._active_schema,
+            }
+            self._registry.save(self._job_id, self._phase, payload)
+        else:
+            self._registry.clear(self._job_id, self._phase)
 
 
 def iter_block_rows(block: FileBlock, encoding: str, errors: str) -> Iterable[Tuple[int, List[str]]]:

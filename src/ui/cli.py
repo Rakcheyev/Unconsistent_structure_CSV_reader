@@ -8,6 +8,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable, List, Sequence
+from uuid import uuid4
 
 from common.config import load_runtime_config
 from common.mapping_serialization import (
@@ -28,6 +29,8 @@ from core.headers.cluster_builder import HeaderClusterizer
 from core.headers.metadata import HeaderMetadata, build_header_metadata
 from core.mapping.offset_detection import detect_offsets
 from core.mapping import MappingService
+from core.jobs import CheckpointRegistry, JobStateMachine
+from core.resources import ResourceManager
 from core.materialization import MaterializationPlanner, MaterializationJobRunner
 from core.normalization import NormalizationService, SynonymDictionary
 from core.validation import load_canonical_registry
@@ -267,6 +270,7 @@ def command_normalize(args: argparse.Namespace) -> None:
 
 def command_materialize(args: argparse.Namespace) -> None:
     runtime = load_runtime_config(profile=args.profile)
+    resource_manager = ResourceManager(runtime.profile.resource_limits)
     mapping = load_mapping_config(Path(args.mapping))
     canonical_registry = load_canonical_registry(Path(runtime.global_settings.canonical_schema_path))
     print(f"[materialize] Loaded mapping: {args.mapping} blocks={len(mapping.blocks)} schemas={len(mapping.schemas)}")
@@ -281,8 +285,32 @@ def command_materialize(args: argparse.Namespace) -> None:
     if args.writer_format == "database" and not args.db_url:
         raise SystemExit("--db-url is required when --writer-format=database")
 
-    checkpoint_path = Path(args.checkpoint) if args.checkpoint else None
+    checkpoint_dir = Path(args.checkpoint_dir)
+    if checkpoint_dir.suffix.lower() == ".json":
+        print(
+            f"[materialize] Legacy --checkpoint path '{checkpoint_dir}' detected; using its parent directory for checkpoint registry."
+        )
+        checkpoint_dir = checkpoint_dir.parent or Path(".")
+    checkpoint_registry = CheckpointRegistry(checkpoint_dir)
     dest_dir = Path(args.dest)
+    sqlite_path: Path | None = Path(args.sqlite_db) if args.sqlite_db else None
+    resume_job_id = args.resume
+    if resume_job_id and args.job_id and resume_job_id != args.job_id:
+        raise SystemExit("--resume JOB_ID must match --job-id when both are provided")
+    job_id = resume_job_id or args.job_id or f"job-{uuid4().hex}"
+    job_tracker = JobStateMachine(
+        job_id,
+        sqlite_path,
+        metadata={"command": "materialize"},
+    )
+    if resume_job_id:
+        print(f"[materialize] job_id={job_id} (resume)")
+        snapshot = checkpoint_registry.load(job_id, "materialize")
+        if not snapshot:
+            print(f"[materialize] No checkpoint payload found for job_id={job_id}; starting fresh.")
+    else:
+        checkpoint_registry.clear(job_id, "materialize")
+        print(f"[materialize] job_id={job_id}")
     # Clean output directory before materialization
     if dest_dir.exists() and dest_dir.is_dir():
         for f in dest_dir.glob("*.csv"):
@@ -292,7 +320,7 @@ def command_materialize(args: argparse.Namespace) -> None:
                 print(f"[materialize] Failed to delete {f}: {e}")
     telemetry_log = Path(args.telemetry_log) if args.telemetry_log else None
     progress_callbacks: List[Callable[[FileProgress], None]] = [render_materialization_progress]
-    progress_db_path: Path | None = Path(args.sqlite_db) if args.sqlite_db else None
+    progress_db_path: Path | None = sqlite_path
     if progress_db_path:
         def persist_progress(progress: FileProgress) -> None:
             record_progress_event(progress_db_path, progress)
@@ -305,29 +333,38 @@ def command_materialize(args: argparse.Namespace) -> None:
     print(f"[materialize] Using encoding: {runtime.global_settings.encoding}")
     runner = MaterializationJobRunner(
         runtime,
-        checkpoint_path=checkpoint_path,
+        checkpoint_registry=checkpoint_registry,
+        job_id=job_id,
         writer_format=args.writer_format,
         spill_threshold=args.spill_threshold,
         telemetry_log=telemetry_log,
         db_url=args.db_url,
         canonical_registry=canonical_registry,
+        job_tracker=job_tracker,
+        resource_manager=resource_manager,
     )
+    completed = False
     try:
         summaries = runner.run(mapping, dest_dir, progress_callback=combined_progress)
+        completed = True
     except UnicodeDecodeError:
         print("UnicodeDecodeError: retrying materialization with cp1251 encoding...")
         runtime.global_settings.encoding = "cp1251"
         print(f"[materialize] Fallback encoding: cp1251")
         runner = MaterializationJobRunner(
             runtime,
-            checkpoint_path=checkpoint_path,
+            checkpoint_registry=checkpoint_registry,
+            job_id=job_id,
             writer_format=args.writer_format,
             spill_threshold=args.spill_threshold,
             telemetry_log=telemetry_log,
             db_url=args.db_url,
             canonical_registry=canonical_registry,
+            job_tracker=job_tracker,
+            resource_manager=resource_manager,
         )
         summaries = runner.run(mapping, dest_dir, progress_callback=combined_progress)
+        completed = True
 
     print(f"[materialize] Output summaries: {len(summaries)}")
     total_rows = sum(summary.rows_written for summary in summaries)
@@ -352,6 +389,8 @@ def command_materialize(args: argparse.Namespace) -> None:
         f"Materialized {len(summaries)} schema job(s) → {dest_dir}. Rows written: {total_rows}. "
         f"Plan saved to {plan_path}."
     )
+    if completed and resource_manager:
+        resource_manager.cleanup(job_id)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -479,9 +518,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to materialization plan JSON",
     )
     materialize.add_argument(
+        "--checkpoint-dir",
+        dest="checkpoint_dir",
+        default="artifacts/checkpoints",
+        help="Directory where per-job checkpoints are stored",
+    )
+    materialize.add_argument(
         "--checkpoint",
-        default="artifacts/materialize_checkpoint.json",
-        help="Checkpoint file for resume support",
+        dest="checkpoint_dir",
+        help=argparse.SUPPRESS,
     )
     materialize.add_argument(
         "--sqlite-db",
@@ -506,6 +551,15 @@ def build_parser() -> argparse.ArgumentParser:
     materialize.add_argument(
         "--db-url",
         help="Database target for --writer-format database (e.g., sqlite:///artifacts/output.db)",
+    )
+    materialize.add_argument(
+        "--job-id",
+        help="Optional identifier for tracking job state (auto-generated when omitted)",
+    )
+    materialize.add_argument(
+        "--resume",
+        metavar="JOB_ID",
+        help="Resume a previous materialize run using the given job id",
     )
     materialize.set_defaults(func=command_materialize)
 

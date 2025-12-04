@@ -15,8 +15,10 @@
    - TODO: UI агент підписується на live події та читає історичні `job_progress_events` зі SQLite.
 5. **Validation Hooks** _(Status: ✅ done)_
    - `ValidationSummary` (short/long/empty rows) виводиться у CLI, SQLite `job_metrics` і telemetry JSONL.
-6. **Resume / Retry** _(Status: ✅ done)_
-   - JSON checkpoint (`artifacts/materialize_checkpoint.json`) зберігає `next_block`, `chunk_index`, `rows_in_chunk`.
+6. **Resume / Retry** _(Status: ✅ done — owner: core.materialization)_
+   - `core.jobs.checkpoints.CheckpointRegistry` тепер єдине сховище (`artifacts/checkpoints/<phase>/<job_id>.json`), Materialization runner пише snapshot-и per schema, очищає їх після успіху й тримає сумісність із `JobStateMachine`.
+   - CLI `uscsv materialize` має `--checkpoint-dir` для override кореня та `--resume JOB_ID` для restarts; `--job-id` стає ключем як для SQLite, так і для checkpointів.
+   - Crash/resume тест (`tests/test_end_to_end_pipeline.py`) працює через registry й гарантує, що snapshot зберігається після збою та видаляється після повторного успіху; README/архдок/CHANGELOG оновлені.
 
 7. **Progress Persistence** _(Status: ✅ done)_
    - Таблиця `job_progress_events` зберігає schema metadata, ETA, rows/s та spill rows, з автоматичним retention (500 записів/схему) + ручним `prune_progress_history`.

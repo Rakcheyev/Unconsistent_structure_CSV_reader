@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
 from common.models import FileBlock, MappingConfig, ProfileSettings, RuntimeConfig, GlobalSettings
+from core.jobs import CheckpointRegistry
 from core.analysis import AnalysisEngine
 from core.mapping import MappingService
 from core.normalization import NormalizationService, SynonymDictionary
@@ -58,13 +60,16 @@ def test_pipeline_resume_and_progress_history(tmp_path: Path, monkeypatch: pytes
     runtime = build_runtime(chunk_rows=2)
     mapping = materialize_mapping(runtime, csv_path, tmp_path)
 
-    checkpoint_path = tmp_path / "checkpoint.json"
+    checkpoint_dir = tmp_path / "checkpoints"
+    checkpoint_registry = CheckpointRegistry(checkpoint_dir)
     dest_dir = tmp_path / "out"
     db_path = tmp_path / "history.db"
+    job_id = f"job-{uuid4().hex}"
 
     runner = MaterializationJobRunner(
         runtime,
-        checkpoint_path=checkpoint_path,
+        checkpoint_registry=checkpoint_registry,
+        job_id=job_id,
         writer_format="csv",
         spill_threshold=2,
     )
@@ -95,16 +100,15 @@ def test_pipeline_resume_and_progress_history(tmp_path: Path, monkeypatch: pytes
 
     runner_after = MaterializationJobRunner(
         runtime,
-        checkpoint_path=checkpoint_path,
+        checkpoint_registry=checkpoint_registry,
+        job_id=job_id,
         writer_format="csv",
         spill_threshold=2,
     )
     runner_after.progress_granularity = 1
     summaries = runner_after.run(mapping, dest_dir, max_jobs=1, progress_callback=persist_progress)
 
-    if checkpoint_path.exists():
-        remaining = checkpoint_path.read_text(encoding="utf-8").strip()
-        assert remaining in ("", "{}"), "Checkpoint file should be empty after resume"
+    assert checkpoint_registry.load(job_id, "materialize") == {}, "Checkpoint should be cleared after resume"
     summary = summaries[0]
     assert summary.rows_written == 3
     record_job_metrics(db_path, summary.to_job_metrics())

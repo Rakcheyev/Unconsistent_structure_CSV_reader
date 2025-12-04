@@ -13,7 +13,13 @@
       "min_gap_lines": 200,
       "max_parallel_files": 1,
       "sample_values_cap": 24,
-      "writer_chunk_rows": 25000
+      "writer_chunk_rows": 25000,
+      "resource_limits": {
+        "memory_mb": 1536,
+        "spill_mb": 4096,
+        "max_workers": 2,
+        "temp_dir": "artifacts/tmp"
+      }
     },
     "workstation": {
       "description": "8-core CPU, >=16 GB RAM, SSD",
@@ -21,7 +27,13 @@
       "min_gap_lines": 100,
       "max_parallel_files": 4,
       "sample_values_cap": 64,
-      "writer_chunk_rows": 100000
+      "writer_chunk_rows": 100000,
+      "resource_limits": {
+        "memory_mb": 8192,
+        "spill_mb": 16384,
+        "max_workers": 4,
+        "temp_dir": "artifacts/tmp"
+      }
     }
   }
 }

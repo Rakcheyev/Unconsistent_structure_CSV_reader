@@ -9,6 +9,7 @@ from core.headers.cluster_builder import HeaderClusterizer
 from core.headers.metadata import build_header_metadata
 from core.mapping.offset_detection import detect_offsets
 from core.materialization import MaterializationJobRunner
+from core.resources import ResourceManager
 from core.validation import load_canonical_registry
 from storage import save_mapping_config
 
@@ -46,6 +47,7 @@ def run_batch_workflow(input_folder: str, output_folder: str, output_format: str
         }
     })
     canonical_registry = load_canonical_registry(Path(runtime.global_settings.canonical_schema_path))
+    resource_manager = ResourceManager(runtime.profile.resource_limits)
 
     # Analyze files
     engine = AnalysisEngine(runtime)
@@ -75,6 +77,7 @@ def run_batch_workflow(input_folder: str, output_folder: str, output_format: str
         writer_format=output_format.lower(),
         spill_threshold=chunk_size,
         canonical_registry=canonical_registry,
+        resource_manager=resource_manager,
     )
     job_runner.run(mapping, Path(output_folder or "output_data/"))
     print(f"Materialization complete. Output saved to {output_folder}")

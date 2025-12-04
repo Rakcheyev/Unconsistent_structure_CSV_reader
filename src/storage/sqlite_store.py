@@ -5,7 +5,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence
 
 from common.models import (
     ColumnProfileResult,
@@ -14,6 +14,7 @@ from common.models import (
     HeaderOccurrence,
     HeaderTypeProfile,
     JobMetrics,
+    JobStatusRecord,
     JobProgressEvent,
     MappingConfig,
 )
@@ -172,6 +173,34 @@ MIGRATIONS: List[tuple[int, List[str]]] = [
                 date_max TEXT,
                 PRIMARY KEY (file_id, column_index)
             )
+            """,
+        ],
+    ),
+    (
+        4,
+        [
+            """
+            CREATE TABLE IF NOT EXISTS job_status (
+                job_id TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                detail TEXT,
+                last_error TEXT,
+                metadata_json TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS job_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                state TEXT NOT NULL,
+                detail TEXT,
+                created_at REAL NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_job_events_job ON job_events(job_id, created_at)
             """,
         ],
     ),
@@ -486,6 +515,87 @@ def record_progress_event(db_path: Path, progress: FileProgress) -> None:
         )
         _prune_progress_events(conn, schema_id)
         conn.commit()
+
+
+def upsert_job_status(
+    db_path: Path,
+    job_id: str,
+    state: str,
+    *,
+    detail: str | None = None,
+    last_error: str | None = None,
+    metadata: Optional[Dict[str, object]] = None,
+) -> JobStatusRecord:
+    initialize(db_path)
+    payload = json.dumps(metadata, ensure_ascii=False) if metadata else None
+    now = time.time()
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("SELECT created_at FROM job_status WHERE job_id = ?", (job_id,))
+        row = cursor.fetchone()
+        created_at = row[0] if row else now
+        if row:
+            conn.execute(
+                """
+                UPDATE job_status
+                SET state = ?, detail = ?, last_error = ?, metadata_json = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (state, detail, last_error, payload, now, job_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO job_status(job_id, state, detail, last_error, metadata_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (job_id, state, detail, last_error, payload, created_at, now),
+            )
+        conn.commit()
+    return JobStatusRecord(
+        job_id=job_id,
+        state=state,
+        detail=detail,
+        last_error=last_error,
+        metadata=metadata or {},
+        created_at=float(created_at),
+        updated_at=float(now),
+    )
+
+
+def record_job_event(db_path: Path, job_id: str, state: str, detail: str | None = None) -> None:
+    initialize(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO job_events(job_id, state, detail, created_at) VALUES (?, ?, ?, ?)",
+            (job_id, state, detail, time.time()),
+        )
+        conn.commit()
+
+
+def fetch_job_status(db_path: Path, job_id: str) -> Optional[JobStatusRecord]:
+    initialize(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute(
+            """
+            SELECT job_id, state, detail, last_error, metadata_json, created_at, updated_at
+            FROM job_status
+            WHERE job_id = ?
+            """,
+            (job_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+    metadata_payload = json.loads(row[4]) if row[4] else {}
+    return JobStatusRecord(
+        job_id=row[0],
+        state=row[1],
+        detail=row[2],
+        last_error=row[3],
+        metadata={str(k): v for k, v in metadata_payload.items()},
+        created_at=float(row[5] or 0.0),
+        updated_at=float(row[6] or 0.0),
+    )
 
 
 def fetch_job_progress_events(

@@ -14,12 +14,15 @@ from .sqlite_store import (
 	fetch_header_profiles,
 	fetch_column_profiles,
 	fetch_job_progress_events,
+	fetch_job_status,
 	persist_header_metadata,
 	persist_column_profiles,
 	prune_progress_history,
 	record_audit_event,
+	record_job_event,
 	record_job_metrics,
 	record_progress_event,
+	upsert_job_status,
 )
 
 __all__ = [
@@ -35,9 +38,12 @@ __all__ = [
 	"record_job_metrics",
 	"record_progress_event",
 	"fetch_job_progress_events",
+	"fetch_job_status",
 	"prune_progress_history",
 	"fetch_file_headers",
 	"fetch_header_occurrences",
 	"fetch_header_profiles",
 	"fetch_column_profiles",
+	"record_job_event",
+	"upsert_job_status",
 ]
