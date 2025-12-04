@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import List, Sequence
 
 from common.models import (
+    ColumnProfileResult,
     FileAnalysisResult,
     FileHeaderSummary,
     HeaderOccurrence,
@@ -31,6 +32,10 @@ def build_header_metadata(results: Sequence[FileAnalysisResult]) -> HeaderMetada
         max_columns = _max_columns(result)
         headers = _prepare_headers(result.raw_headers, max_columns)
         file_headers.append(FileHeaderSummary(file_id=file_id, headers=headers))
+        column_profiles = {
+            profile.column_index: profile
+            for profile in result.column_profiles
+        }
         for idx, header in enumerate(headers):
             normalized = header.strip() or f"column_{idx + 1}"
             occurrences.append(
@@ -41,6 +46,9 @@ def build_header_metadata(results: Sequence[FileAnalysisResult]) -> HeaderMetada
                 )
             )
             type_counts = _aggregate_column_type_counts(result.blocks, idx)
+            profile = column_profiles.get(idx)
+            if profile:
+                _merge_column_profile_counts(type_counts, profile)
             profile_accumulator[normalized].update(type_counts)
 
     profiles = [
@@ -76,3 +84,18 @@ def _aggregate_column_type_counts(blocks, column_index: int) -> dict[str, int]:
             inferred = Counter(classify_value(value) for value in stats.sample_values)
             counter.update(inferred)
     return ensure_type_buckets(dict(counter))
+
+
+def _merge_column_profile_counts(counter: dict[str, int], profile: ColumnProfileResult) -> None:
+    mapping = {
+        "null": "empty",
+        "integer": "integer",
+        "float": "float",
+        "text": "text",
+        "date": "date",
+    }
+    for bucket, count in profile.type_distribution.items():
+        key = mapping.get(bucket)
+        if not key:
+            continue
+        counter[key] = counter.get(key, 0) + int(count)

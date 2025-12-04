@@ -131,6 +131,23 @@ class HeaderTypeProfile:
 
 
 @dataclass(slots=True)
+class ColumnProfileResult:
+    """Per-file column profiler output persisted after Phase 1."""
+
+    file_id: str
+    column_index: int
+    header: str
+    type_distribution: Dict[str, int] = field(default_factory=dict)
+    unique_estimate: int = 0
+    null_count: int = 0
+    total_values: int = 0
+    numeric_min: Optional[float] = None
+    numeric_max: Optional[float] = None
+    date_min: Optional[str] = None
+    date_max: Optional[str] = None
+
+
+@dataclass(slots=True)
 class MappingConfig:
     """Serializable mapping between file blocks and schemas."""
 
@@ -141,6 +158,7 @@ class MappingConfig:
     file_headers: List[FileHeaderSummary] = field(default_factory=list)
     header_occurrences: List[HeaderOccurrence] = field(default_factory=list)
     header_profiles: List[HeaderTypeProfile] = field(default_factory=list)
+    column_profiles: List[ColumnProfileResult] = field(default_factory=list)
 
     def to_dict(self, *, include_samples: bool = False) -> Dict[str, object]:
         """Return a JSON-ready dictionary without copying sample payloads unless requested."""
@@ -179,6 +197,7 @@ class FileAnalysisResult:
     total_lines: int
     blocks: List[FileBlock] = field(default_factory=list)
     raw_headers: List[str] = field(default_factory=list)
+    column_profiles: List[ColumnProfileResult] = field(default_factory=list)
 
 
 @dataclass(slots=True)

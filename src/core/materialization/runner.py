@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from common.config import error_mode_from_policy
 from common.models import (
+    ColumnProfileResult,
     FileBlock,
     FileProgress,
     JobMetrics,
@@ -65,9 +66,15 @@ def _slugify(value: str) -> str:
 class RowNormalizer:
     """Aligns rows to the canonical schema order using schema_mapping entries."""
 
-    def __init__(self, mappings: Sequence[SchemaMappingEntry] | None = None) -> None:
+    def __init__(
+        self,
+        mappings: Sequence[SchemaMappingEntry] | None = None,
+        *,
+        column_profiles: Sequence[ColumnProfileResult] | None = None,
+    ) -> None:
         self._map = self._build_index(mappings or [])
         self._schema_slug_cache: Dict[str, Dict[str, int]] = {}
+        self._profile_index = self._build_profile_index(column_profiles or [])
 
     def normalize(self, row: List[str], schema: SchemaDefinition, *, source_path: Path) -> "NormalizedRow":
         observed_length = len(row)
@@ -119,7 +126,10 @@ class RowNormalizer:
                 if slug and slug not in slug_map:
                     slug_map[slug] = column.index
             self._schema_slug_cache[schema_id] = slug_map
-        return slug_map.get(_slugify(entry.canonical_name))
+        target = slug_map.get(_slugify(entry.canonical_name))
+        if target is not None:
+            return target
+        return self._match_by_type(entry, schema)
 
     def _key(self, path: Path) -> str:
         try:
@@ -139,6 +149,64 @@ class RowNormalizer:
             if entry.target_index is not None:
                 bucket["max_target"] = max(bucket["max_target"], entry.target_index)
         return index
+
+    def _build_profile_index(
+        self, profiles: Sequence[ColumnProfileResult]
+    ) -> Dict[tuple[str, int], ColumnProfileResult]:
+        index: Dict[tuple[str, int], ColumnProfileResult] = {}
+        for profile in profiles:
+            keys = {profile.file_id}
+            try:
+                keys.add(Path(profile.file_id).resolve().as_posix())
+            except (OSError, ValueError):
+                pass
+            for key in keys:
+                index[(key, profile.column_index)] = profile
+        return index
+
+    def _match_by_type(
+        self, entry: SchemaMappingEntry, schema: SchemaDefinition
+    ) -> int | None:
+        if not self._profile_index:
+            return None
+        profile = self._profile_index.get((self._key(entry.file_path), entry.source_index))
+        if profile is None:
+            return None
+        bucket = self._profile_bucket(profile)
+        if not bucket:
+            return None
+        candidates = [
+            column.index
+            for column in schema.columns
+            if self._schema_bucket(column.data_type) == bucket
+        ]
+        if not candidates and bucket in {"integer", "float"}:
+            alt = "float" if bucket == "integer" else "integer"
+            candidates = [
+                column.index
+                for column in schema.columns
+                if self._schema_bucket(column.data_type) == alt
+            ]
+        return candidates[0] if candidates else None
+
+    @staticmethod
+    def _profile_bucket(profile: ColumnProfileResult) -> str | None:
+        distribution = profile.type_distribution
+        filtered = {k: v for k, v in distribution.items() if k != "null" and v > 0}
+        if not filtered:
+            return None
+        return max(filtered.items(), key=lambda item: item[1])[0]
+
+    @staticmethod
+    def _schema_bucket(data_type: str | None) -> str:
+        normalized = (data_type or "").lower()
+        if normalized in {"int", "integer"}:
+            return "integer"
+        if normalized in {"float", "double", "decimal", "number"}:
+            return "float"
+        if "date" in normalized or "time" in normalized:
+            return "date"
+        return "text"
 
 
 @dataclass(slots=True)
@@ -200,6 +268,7 @@ class MaterializationJobRunner:
         schema_map = {str(schema.id): schema for schema in mapping.schemas}
 
         schema_mapping_entries = list(mapping.schema_mapping)
+        column_profiles = list(mapping.column_profiles)
         with ThreadPoolExecutor(max_workers=max_jobs) as executor:
             futures = []
             for schema_id, blocks in schema_blocks.items():
@@ -215,6 +284,7 @@ class MaterializationJobRunner:
                         progress_callback,
                         global_seen_lines,
                         schema_mapping_entries,
+                        column_profiles,
                     )
                 )
             for future in futures:
@@ -229,6 +299,7 @@ class MaterializationJobRunner:
         progress_callback: Optional[Callable[[FileProgress], None]],
         global_seen_lines: Optional[set[tuple[str, int]]] = None,
         schema_mappings: Sequence[SchemaMappingEntry] | None = None,
+        column_profiles: Sequence[ColumnProfileResult] | None = None,
     ) -> JobSummary:
         blocks.sort(key=lambda b: (str(b.file_path), b.start_line))
         schema_id = str(schema.id)
@@ -249,7 +320,7 @@ class MaterializationJobRunner:
             threshold=self.spill_threshold,
             spool_dir=dest_dir / "_spool" / schema_id,
         )
-        normalizer = RowNormalizer(schema_mappings)
+        normalizer = RowNormalizer(schema_mappings, column_profiles=column_profiles)
         total_estimated_rows = sum(self._estimate_block_rows(block) for block in blocks)
         processed_rows = writer.total_rows
         next_progress_emit = processed_rows + self.progress_granularity

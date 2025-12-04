@@ -5,16 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [0.2.0] - 2025-12-01
 ## [0.3.0] - 2025-12-04
 ### Added
-- Phase 1 header telemetry (`header_occurrences`, `header_profiles`, `file_headers`) now recorded during `uscsv analyze`, persisted to JSON + SQLite, and exposed via new `HeaderMetadata` helpers.
-- Graph-driven `HeaderClusterizer` builds canonical names + confidence scores (with Cyrillic/Latin synonym awareness) and writes `mapping.header_clusters` for downstream review/materialization.
-- Offset detection now emits `schema_mapping` entries off the header clusters, and `RowNormalizer` consumes them to realign per-file columns during materialization.
-- Regression suites for clusterizer synonyms, schema mapping offsets, and RowNormalizer file-specific mappings.
-
-### Changed
-- Analyze/Batch workflows now include `schema_mapping` payloads by default and backfill them before materialization when missing.
-- Materialization runner keeps track of the original row width while reordering rows so short/long-row validation still reflects raw inputs despite canonical alignment.
-
-### Added
+- Streaming Phase 1 column profiler captures type distribution buckets, HyperLogLog-lite unique estimates, null counts, and numeric/date min-max per column. Results ship in `mapping.column_profiles`, dedicated JSON artifacts (`mapping.column_profiles.json`), and the new SQLite `column_profiles` table so Phase 1.5/2 modules can reuse the telemetry.
+- Phase 1 header + column metadata (`header_occurrences`, `header_profiles`, `file_headers`, column profiles) are now recorded during `uscsv analyze`, persisted to JSON + SQLite, and exposed through `HeaderMetadata` helpers.
+- Graph-driven `HeaderClusterizer` normalizes Cyrillic/Latin tokens, blends Levenshtein + n-gram Jaccard + token overlap scores, enforces type compatibility, and writes both `mapping.header_clusters` plus a standalone `mapping.header_clusters.json` artifact with canonical names, confidence, and review hints.
+- Offset detection uses cluster + profile signals to emit richer `schema_mapping` entries (including confidence per mapping). `RowNormalizer` can now fall back to schema positions by comparing profiler buckets when canonical slugs do not match reviewed schema columns, keeping canonical rows aligned across drifting headers.
+- CLI analyze saves the new artifacts, seeds SQLite with header + column telemetry, and regression suites now cover the profiler, column profile serialization, SQLite migrations, clusterizer behavior, offset detection, and RowNormalizer type-fallback logic.
 - Adaptive throttling + structured progress logging for the analysis engine alongside a CLI `benchmark` command for throughput tracking.
 - Optional SQLite persistence + audit logging toggled via `--sqlite-db` for analyze/review/normalize/materialize flows.
 - Materialization job runner with chunked CSV writers, checkpoint/resume support, and CLI integration that limits active writers to two concurrent schemas.
@@ -27,8 +22,10 @@ All notable changes to this project will be documented in this file.
 - End-to-end pipeline regression (`tests/test_end_to_end_pipeline.py`) covering Import → Analyze → Review → Normalize → Materialize with simulated crash/resume and history verification, plus a materialization writer roadmap doc for Arrow Dataset / warehouse backends.
 
 ### Changed
+- Analyze/Batch workflows now include `schema_mapping` and profiler payloads by default, backfilling them before materialization when missing, and exporting artifacts for agents/UX review.
+- Materialization runner keeps track of the original row width while reordering rows so short/long-row validation still reflects raw inputs despite canonical alignment.
 - `uscsv materialize` now executes real writers and still emits a JSON plan for downstream automation.
-- Documentation (`README.md`, `docs/workflow.md`, module `TASKS.md`, `docs/ui_ux.md`, `docs/materialization_writers_plan.md`) updated to describe the new runner, history APIs, benchmarks, and upcoming writer roadmap.
+- Documentation (`README.md`, `docs/workflow.md`, module `TASKS.md`, `docs/ui_ux.md`, `docs/materialization_writers_plan.md`, `docs/data_sampling.md`) updated to describe the profiler, header clustering flow, history APIs, benchmarks, and upcoming writer roadmap.
 
 ## [0.1.0] - 2025-11-25
 ### Added

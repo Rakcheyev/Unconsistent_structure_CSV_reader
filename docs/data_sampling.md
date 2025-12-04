@@ -18,6 +18,14 @@
    - header sample та column count (mode).
 5. Формування `FileBlock` з `SchemaSignature`.
 
+## Column Profiling
+- Кожен блок додатково проходить через стрімінговий `ColumnProfiler`:
+  - рахує null %, top-k значень, HLL-lite оцінку унікальних елементів;
+  - відстежує min/max для чисел і дат, зберігає приклади невалідних рядків;
+  - фіксує гігієну рядків (leading/trailing whitespace, printable %, sample length).
+- Результати зливаються у `ColumnProfile` структуру на файлі та колонці, після чого серіалізуються в `mapping.column_profiles.json` і таблицю SQLite `column_profiles`.
+- Профайли підключені до `HeaderClusterizer` (для відсіву несумісних кандидатів) і `RowNormalizer` (для фолбеку на позиції стовпчиків при конфліктах canonical names).
+
 ## Parallel Strategy
 - Один процес = аналіз одного файлу (`ProcessPoolExecutor`).
 - Async orchestrator управляє пулом, слухає `asyncio.as_completed` та оновлює прогрес.

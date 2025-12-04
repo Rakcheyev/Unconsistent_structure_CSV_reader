@@ -49,17 +49,20 @@ def run_batch_workflow(input_folder: str, output_folder: str, output_format: str
     engine = AnalysisEngine(runtime)
     results = engine.analyze_files(files)
     all_blocks = []
+    all_column_profiles = []
     for result in results:
         all_blocks.extend(result.blocks)
+        all_column_profiles.extend(result.column_profiles)
 
     # Build and save mapping config with header clusters
     header_clusters = build_header_clusters(results)
-    schema_mapping = detect_offsets(header_clusters)
+    schema_mapping = detect_offsets(header_clusters, column_profiles=all_column_profiles)
     mapping = MappingConfig(
         blocks=all_blocks,
         schemas=[],
         header_clusters=header_clusters,
         schema_mapping=schema_mapping,
+        column_profiles=all_column_profiles,
     )
     mapping_path = Path(output_folder or "output_data/") / "mapping.json"
     save_mapping_config(mapping, mapping_path)

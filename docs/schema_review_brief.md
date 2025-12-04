@@ -6,7 +6,7 @@
 
 ## Deliverables
 1. **Wireframes (Figma / PNG / ASCII)**
-   - Card-based grid із показниками: columns count, blocks bound, confidence.
+   - Card-based grid із показниками: columns count, blocks bound, confidence + колонкові профайли (null %, unique %, top values) із `mapping.column_profiles`.
    - Merge comparison view (Schema A vs B) із CTA `Yes, merge` / `No, keep separate`.
    - Column normalization table з кольоровою легендою (зелений ≥0.90, тощо).
 2. **Interaction Notes**
@@ -16,6 +16,7 @@
    - Merge scenario: два блоки з різними заголовками → manual confirmation.
    - Headerless блоки → система пропонує column_#, користувач може перейменувати.
    - Mixed delimiters → UI попереджає, дозволяє reassign schema.
+   - Column profiler flags (наприклад, 0% uniqueness + 80% nulls) відображаються на карточці й блокують авто-merge до ручного підтвердження.
 4. **Audit Hooks**
    - Кожне підтвердження/merge записується в SQLite `audit_log` з полями entity/action/detail/time.
 

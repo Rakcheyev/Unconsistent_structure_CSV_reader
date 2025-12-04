@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from difflib import SequenceMatcher
 from pathlib import Path
 import re
-from typing import Dict, Iterable, List, Sequence
+from typing import Dict, Iterable, List, Sequence, Set, Tuple
 import unicodedata
 
 from common.models import (
+    ColumnProfileResult,
     ColumnStats,
     FileAnalysisResult,
     FileBlock,
@@ -120,6 +120,14 @@ class VariantAccumulator:
             _merge_counts(self.detected_types, stats.type_counts)
         self.row_count += max(0, rows)
 
+    def merge_profile(self, profile: ColumnProfileResult | None) -> None:
+        if not profile:
+            return
+        normalized = _normalize_profile_counts(profile.type_distribution)
+        _merge_counts(self.detected_types, normalized)
+        if profile.total_values:
+            self.row_count = max(self.row_count, profile.total_values)
+
 
 @dataclass(slots=True)
 class HeaderNode:
@@ -132,10 +140,14 @@ class HeaderNode:
     type_profile: Dict[str, int]
     variants: List[HeaderVariant] = field(default_factory=list)
     total_rows: int = 0
+    tokens: Tuple[str, ...] = tuple()
+    ngrams: Set[str] = field(default_factory=set)
+    file_ids: Set[str] = field(default_factory=set)
 
     def add_variant(self, variant: HeaderVariant) -> None:
         self.variants.append(variant)
         self.total_rows += max(0, variant.row_count)
+        self.file_ids.add(variant.file_path.as_posix())
 
     @property
     def dominant_type(self) -> str | None:
@@ -151,14 +163,16 @@ class HeaderClusterizer:
     def __init__(
         self,
         *,
-        similarity_threshold: float = 0.78,
+        similarity_threshold: float = 0.72,
         review_threshold: float = 0.7,
         synonym_sets: Sequence[Sequence[str]] | None = None,
+        ngram_size: int = 3,
     ) -> None:
         self.similarity_threshold = similarity_threshold
         self.review_threshold = review_threshold
         self.synonym_map = self._build_synonym_map(synonym_sets or _DEFAULT_SYNONYM_SETS)
         self.sample_clip = 32
+        self.ngram_size = max(2, ngram_size)
 
     def build(
         self,
@@ -185,6 +199,10 @@ class HeaderClusterizer:
         for result in results:
             headers = self._resolved_headers(result)
             max_columns = len(headers)
+            profile_lookup = {
+                profile.column_index: profile
+                for profile in result.column_profiles
+            }
             for block in result.blocks:
                 column_count = block.signature.column_count or max_columns
                 row_count = _block_row_count(block)
@@ -199,6 +217,7 @@ class HeaderClusterizer:
                         accumulator.raw_name = raw_name
                     stats = block.signature.columns.get(idx)
                     accumulator.update(stats, row_count)
+                    accumulator.merge_profile(profile_lookup.get(idx))
         variants: List[HeaderVariant] = []
         for accumulator in accumulators.values():
             normalized = _canonical_slug(accumulator.raw_name) or accumulator.raw_name.strip() or f"column_{accumulator.column_index + 1}"
@@ -244,6 +263,8 @@ class HeaderClusterizer:
                     translit=translit,
                     skeleton=skeleton,
                     type_profile=type_profile,
+                    tokens=_tokenize(slug),
+                    ngrams=_ngram_set(slug.replace(" ", ""), self.ngram_size),
                 )
                 nodes[key] = node
             node.add_variant(variant)
@@ -294,10 +315,10 @@ class HeaderClusterizer:
             return True
         if not left.slug or not right.slug:
             return False
-        if left.dominant_type and right.dominant_type and left.dominant_type != right.dominant_type:
+        if not self._type_profiles_compatible(left.type_profile, right.type_profile):
             return False
-        similarity = SequenceMatcher(None, left.slug, right.slug).ratio()
-        if similarity >= self.similarity_threshold:
+        score = self._similarity_score(left, right)
+        if score >= self.similarity_threshold:
             return True
         translit_match = bool(left.translit and left.translit == right.translit)
         if translit_match:
@@ -329,9 +350,11 @@ class HeaderClusterizer:
         )
 
     def _select_canonical_name(self, nodes: Sequence[HeaderNode]) -> str:
-        def score(node: HeaderNode) -> float:
-            penalty = 0.25 if node.display_name.lower().startswith("column_") else 0.0
-            return node.total_rows * (1.0 - penalty)
+        def score(node: HeaderNode) -> tuple[int, int, int]:
+            frequency = len(node.file_ids)
+            ascii_bonus = 1 if node.display_name.isascii() else 0
+            length_score = -len(node.display_name.strip() or node.display_name)
+            return (frequency, ascii_bonus, length_score)
 
         best = max(nodes, key=score)
         return best.display_name
@@ -366,3 +389,97 @@ class HeaderClusterizer:
         while len(headers) < max_columns:
             headers.append(f"column_{len(headers) + 1}")
         return headers or ["column_1"]
+
+    def _similarity_score(self, left: HeaderNode, right: HeaderNode) -> float:
+        lev = _levenshtein_ratio(left.slug, right.slug)
+        ngram = _jaccard(left.ngrams, right.ngrams)
+        token = _token_overlap(left.tokens, right.tokens)
+        return 0.5 * lev + 0.3 * ngram + 0.2 * token
+
+    @staticmethod
+    def _type_profiles_compatible(left: Dict[str, int], right: Dict[str, int]) -> bool:
+        dominant_left = _dominant_type(left)
+        dominant_right = _dominant_type(right)
+        if not dominant_left or not dominant_right:
+            return True
+        if dominant_left == dominant_right:
+            return True
+        numeric = {"integer", "float"}
+        if dominant_left in numeric and dominant_right in numeric:
+            return True
+        return False
+
+
+def _normalize_profile_counts(distribution: Dict[str, int]) -> Dict[str, int]:
+    mapping = {
+        "null": "empty",
+        "integer": "integer",
+        "float": "float",
+        "text": "text",
+        "date": "date",
+    }
+    normalized: Dict[str, int] = {}
+    for bucket, count in distribution.items():
+        key = mapping.get(bucket)
+        if not key:
+            continue
+        normalized[key] = normalized.get(key, 0) + int(count)
+    return normalized
+
+
+def _tokenize(slug: str) -> Tuple[str, ...]:
+    if not slug:
+        return tuple()
+    return tuple(token for token in slug.split() if token)
+
+
+def _ngram_set(text: str, n: int) -> Set[str]:
+    cleaned = text.strip()
+    if not cleaned:
+        return set()
+    if len(cleaned) <= n:
+        return {cleaned}
+    return {cleaned[idx : idx + n] for idx in range(len(cleaned) - n + 1)}
+
+
+def _levenshtein_ratio(left: str, right: str) -> float:
+    if left == right:
+        return 1.0
+    if not left or not right:
+        return 0.0
+    len_left = len(left)
+    len_right = len(right)
+    prev = list(range(len_right + 1))
+    for i, char_left in enumerate(left, start=1):
+        curr = [i]
+        for j, char_right in enumerate(right, start=1):
+            cost = 0 if char_left == char_right else 1
+            curr.append(min(curr[-1] + 1, prev[j] + 1, prev[j - 1] + cost))
+        prev = curr
+    distance = prev[-1]
+    return 1.0 - distance / max(len_left, len_right)
+
+
+def _jaccard(left: Set[str], right: Set[str]) -> float:
+    if not left and not right:
+        return 1.0
+    if not left or not right:
+        return 0.0
+    intersection = len(left & right)
+    union = len(left | right)
+    if union == 0:
+        return 0.0
+    return intersection / union
+
+
+def _token_overlap(left: Tuple[str, ...], right: Tuple[str, ...]) -> float:
+    set_left = set(left)
+    set_right = set(right)
+    return _jaccard(set_left, set_right)
+
+
+def _dominant_type(profile: Dict[str, int]) -> str | None:
+    filtered = {bucket: count for bucket, count in profile.items() if bucket != "empty" and count > 0}
+    if not filtered:
+        return None
+    return max(filtered.items(), key=lambda item: item[1])[0]

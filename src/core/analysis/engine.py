@@ -18,6 +18,7 @@ from common.models import (
 )
 from common.progress import ProgressLogger
 from core.headers.type_inference import classify_value
+from .column_profiler import profile_file_columns
 from .block_planner import BlockPlanner
 from .line_counter import LineCounter
 
@@ -172,12 +173,25 @@ def analyze_file(
             )
         )
 
-    raw_headers = _extract_file_headers(path, encoding=encoding, errors=errors)
+    raw_headers, header_delimiter = _extract_file_headers(path, encoding=encoding, errors=errors)
+    profile_delimiter = header_delimiter or (blocks[0].signature.delimiter if blocks else ",")
+    column_profiles = profile_file_columns(
+        path,
+        delimiter=profile_delimiter,
+        encoding=encoding,
+        errors=errors,
+    )
 
-    return FileAnalysisResult(file_path=path, total_lines=total_lines, blocks=blocks, raw_headers=raw_headers)
+    return FileAnalysisResult(
+        file_path=path,
+        total_lines=total_lines,
+        blocks=blocks,
+        raw_headers=raw_headers,
+        column_profiles=column_profiles,
+    )
 
 
-def _extract_file_headers(path: Path, *, encoding: str, errors: str) -> List[str]:
+def _extract_file_headers(path: Path, *, encoding: str, errors: str) -> tuple[List[str], str]:
     """Read the first non-empty header row from the file."""
 
     try:
@@ -187,10 +201,10 @@ def _extract_file_headers(path: Path, *, encoding: str, errors: str) -> List[str
                 if not stripped:
                     continue
                 delimiter = detect_delimiter(stripped)
-                return [cell.strip() for cell in stripped.split(delimiter)]
+                return [cell.strip() for cell in stripped.split(delimiter)], delimiter
     except OSError:
-        return []
-    return []
+        return [], ","
+    return [], ","
 
 
 def _worker_entry(args: Tuple[str, str, str, int, int, int]) -> FileAnalysisResult:

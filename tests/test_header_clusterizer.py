@@ -95,7 +95,11 @@ def test_clusterizer_merges_month_synonyms(tmp_path) -> None:
         ),
     ]
     clusters = HeaderClusterizer().build(results)
-    month_clusters = [cluster for cluster in clusters if cluster.canonical_name.lower().startswith("month")]
+    month_clusters = [
+        cluster
+        for cluster in clusters
+        if {variant.raw_name.lower() for variant in cluster.variants}.issuperset({"month", "mon", "місяць"})
+    ]
     assert len(month_clusters) == 1
     names = {variant.raw_name for variant in month_clusters[0].variants}
     assert {"month", "mon", "місяць"}.issubset(names)

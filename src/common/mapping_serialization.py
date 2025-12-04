@@ -6,6 +6,7 @@ from typing import Dict, List
 from uuid import UUID
 
 from .models import (
+    ColumnProfileResult,
     ColumnStats,
     FileBlock,
     FileHeaderSummary,
@@ -36,6 +37,8 @@ def mapping_to_dict(mapping: MappingConfig, *, include_samples: bool = False) ->
         payload["header_occurrences"] = [serialize_header_occurrence(item) for item in mapping.header_occurrences]
     if mapping.header_profiles:
         payload["header_profiles"] = [serialize_header_profile(item) for item in mapping.header_profiles]
+    if mapping.column_profiles:
+        payload["column_profiles"] = [serialize_column_profile_result(item) for item in mapping.column_profiles]
     return payload
 
 
@@ -54,6 +57,8 @@ def mapping_from_dict(data: Dict[str, object]) -> MappingConfig:
     file_headers = [deserialize_file_header(item) for item in file_headers_data]
     header_occurrences = [deserialize_header_occurrence(item) for item in header_occurrences_data]
     header_profiles = [deserialize_header_profile(item) for item in header_profiles_data]
+    column_profiles_data = data.get("column_profiles", [])
+    column_profiles = [deserialize_column_profile_result(item) for item in column_profiles_data]
     return MappingConfig(
         blocks=blocks,
         schemas=schemas,
@@ -62,6 +67,44 @@ def mapping_from_dict(data: Dict[str, object]) -> MappingConfig:
         file_headers=file_headers,
         header_occurrences=header_occurrences,
         header_profiles=header_profiles,
+        column_profiles=column_profiles,
+    )
+
+
+def serialize_column_profile_result(item: ColumnProfileResult) -> Dict[str, object]:
+    payload: Dict[str, object] = {
+        "file_id": item.file_id,
+        "column_index": item.column_index,
+        "header": item.header,
+        "type_distribution": dict(item.type_distribution),
+        "unique_estimate": item.unique_estimate,
+        "null_count": item.null_count,
+        "total_values": item.total_values,
+    }
+    if item.numeric_min is not None:
+        payload["numeric_min"] = item.numeric_min
+    if item.numeric_max is not None:
+        payload["numeric_max"] = item.numeric_max
+    if item.date_min is not None:
+        payload["date_min"] = item.date_min
+    if item.date_max is not None:
+        payload["date_max"] = item.date_max
+    return payload
+
+
+def deserialize_column_profile_result(data: Dict[str, object]) -> ColumnProfileResult:
+    return ColumnProfileResult(
+        file_id=str(data.get("file_id", "")),
+        column_index=int(data.get("column_index", 0)),
+        header=str(data.get("header", "")),
+        type_distribution={str(k): int(v) for k, v in data.get("type_distribution", {}).items()},
+        unique_estimate=int(data.get("unique_estimate", 0)),
+        null_count=int(data.get("null_count", 0)),
+        total_values=int(data.get("total_values", 0)),
+        numeric_min=float(data["numeric_min"]) if "numeric_min" in data else None,
+        numeric_max=float(data["numeric_max"]) if "numeric_max" in data else None,
+        date_min=str(data["date_min"]) if "date_min" in data else None,
+        date_max=str(data["date_max"]) if "date_max" in data else None,
     )
 
 

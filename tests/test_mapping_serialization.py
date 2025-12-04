@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from common.models import (
+    ColumnProfileResult,
     ColumnStats,
     FileBlock,
     HeaderCluster,
@@ -49,11 +50,22 @@ def _build_mapping() -> MappingConfig:
         target_index=0,
     )
 
+    column_profile = ColumnProfileResult(
+        file_id="input.csv",
+        column_index=0,
+        header="col0",
+        type_distribution={"text": 2, "null": 0},
+        unique_estimate=2,
+        null_count=0,
+        total_values=2,
+    )
+
     return MappingConfig(
         blocks=[block],
         schemas=[schema],
         header_clusters=[header_cluster],
         schema_mapping=[mapping_entry],
+        column_profiles=[column_profile],
     )
 
 
@@ -66,6 +78,8 @@ def test_mapping_config_to_dict_excludes_samples_by_default():
     cluster_payload = payload["header_clusters"][0]
     variant_payload = cluster_payload["variants"][0]
     assert "sample_values" not in variant_payload
+
+    assert payload["column_profiles"][0]["header"] == "col0"
 
 
 def test_mapping_config_round_trip_with_samples():
@@ -99,3 +113,8 @@ def test_mapping_config_round_trip_with_samples():
     assert restored_entry.canonical_name == "col0_norm"
     assert restored_entry.source_index == 0
     assert restored_entry.target_index == 0
+
+    assert len(restored.column_profiles) == 1
+    restored_profile = restored.column_profiles[0]
+    assert restored_profile.header == "col0"
+    assert restored_profile.unique_estimate == 2

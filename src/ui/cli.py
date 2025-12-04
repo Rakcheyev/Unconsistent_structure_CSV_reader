@@ -2,13 +2,26 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable, List
+from typing import Callable, Iterable, List, Sequence
 
 from common.config import load_runtime_config
-from common.models import FileAnalysisResult, FileProgress, MappingConfig, RuntimeConfig
+from common.mapping_serialization import (
+    serialize_column_profile_result,
+    serialize_header_cluster,
+)
+from common.models import (
+    ColumnProfileResult,
+    FileAnalysisResult,
+    FileProgress,
+    HeaderCluster,
+    MappingConfig,
+    RuntimeConfig,
+)
 from common.progress import BenchmarkRecorder
 from core.analysis import AnalysisEngine
 from core.headers.cluster_builder import HeaderClusterizer
@@ -21,6 +34,7 @@ from storage import (
     init_sqlite,
     load_mapping_config,
     persist_mapping_sqlite,
+    persist_column_profiles,
     persist_header_metadata,
     record_audit_event,
     record_job_metrics,
@@ -94,13 +108,15 @@ def command_analyze(args: argparse.Namespace) -> None:
         results: List[FileAnalysisResult] = engine.analyze_files(files, progress_callback=render_progress)
 
     all_blocks = []
+    all_column_profiles = []
     for result in results:
         all_blocks.extend(result.blocks)
+        all_column_profiles.extend(result.column_profiles)
 
     metadata = build_header_metadata(results)
     clusterizer = HeaderClusterizer()
     header_clusters = clusterizer.build(results, metadata=metadata)
-    schema_mapping = detect_offsets(header_clusters)
+    schema_mapping = detect_offsets(header_clusters, column_profiles=all_column_profiles)
     mapping = MappingConfig(
         blocks=all_blocks,
         schemas=[],
@@ -109,11 +125,15 @@ def command_analyze(args: argparse.Namespace) -> None:
         file_headers=metadata.file_headers,
         header_occurrences=metadata.occurrences,
         header_profiles=metadata.profiles,
+        column_profiles=all_column_profiles,
     )
     output_path = Path(args.output)
     save_mapping_config(mapping, output_path, include_samples=args.include_samples)
+    write_header_cluster_artifact(header_clusters, output_path)
+    write_column_profile_artifact(all_column_profiles, output_path)
     maybe_persist_sqlite(mapping, args.sqlite_db, "analyze")
     maybe_persist_header_metadata(metadata, args.sqlite_db)
+    maybe_persist_column_profiles(all_column_profiles, args.sqlite_db)
 
     print(f"Wrote mapping with {len(all_blocks)} blocks to {output_path}")
 
@@ -214,7 +234,10 @@ def command_review(args: argparse.Namespace) -> None:
             print(f"[header-detect] Error reading {file_path}: {e}")
 
     # Offset detection integration
-    updated.schema_mapping = detect_offsets(updated.header_clusters)
+    updated.schema_mapping = detect_offsets(
+        updated.header_clusters,
+        column_profiles=updated.column_profiles,
+    )
 
     output_path = Path(args.output)
     save_mapping_config(updated, output_path, include_samples=args.include_samples)
@@ -246,7 +269,10 @@ def command_materialize(args: argparse.Namespace) -> None:
     print(f"[materialize] Loaded mapping: {args.mapping} blocks={len(mapping.blocks)} schemas={len(mapping.schemas)}")
 
     if not mapping.schema_mapping and mapping.header_clusters:
-        mapping.schema_mapping = detect_offsets(mapping.header_clusters)
+        mapping.schema_mapping = detect_offsets(
+            mapping.header_clusters,
+            column_profiles=mapping.column_profiles,
+        )
         print("[materialize] Generated schema_mapping entries from header clusters")
 
     if args.writer_format == "database" and not args.db_url:
@@ -516,6 +542,42 @@ def maybe_persist_header_metadata(metadata: HeaderMetadata, sqlite_arg: str | No
         return
     db_path = Path(sqlite_arg)
     persist_header_metadata(db_path, metadata.file_headers, metadata.occurrences, metadata.profiles)
+
+
+def maybe_persist_column_profiles(
+    profiles: Sequence[ColumnProfileResult], sqlite_arg: str | None
+) -> None:
+    if not sqlite_arg or not profiles:
+        return
+    db_path = Path(sqlite_arg)
+    persist_column_profiles(db_path, profiles)
+
+
+def write_header_cluster_artifact(
+    clusters: Sequence[HeaderCluster], mapping_path: Path
+) -> None:
+    if not clusters:
+        return
+    payload = {
+        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "cluster_count": len(clusters),
+        "clusters": [serialize_header_cluster(cluster, include_samples=False) for cluster in clusters],
+    }
+    artifact_path = mapping_path.with_name(f"{mapping_path.stem}.header_clusters.json")
+    artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def write_column_profile_artifact(
+    profiles: Sequence[ColumnProfileResult], mapping_path: Path
+) -> None:
+    if not profiles:
+        return
+    payload = {
+        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "profiles": [serialize_column_profile_result(profile) for profile in profiles],
+    }
+    artifact_path = mapping_path.with_name(f"{mapping_path.stem}.column_profiles.json")
+    artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def maybe_initialize_sqlite(sqlite_arg: str | None) -> None:

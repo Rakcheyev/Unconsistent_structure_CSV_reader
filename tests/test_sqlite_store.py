@@ -4,8 +4,13 @@ import json
 import sqlite3
 from pathlib import Path
 
-from common.models import FileProgress, JobMetrics, SpillMetrics, ValidationSummary
-from storage import fetch_job_progress_events, prune_progress_history
+from common.models import ColumnProfileResult, FileProgress, JobMetrics, SpillMetrics, ValidationSummary
+from storage import (
+    fetch_column_profiles,
+    fetch_job_progress_events,
+    persist_column_profiles,
+    prune_progress_history,
+)
 from storage.sqlite_store import (
     MIGRATIONS,
     initialize,
@@ -136,6 +141,31 @@ def test_progress_event_retention_enforced(tmp_path: Path, monkeypatch) -> None:
     prune_progress_history(db_path, schema_id="schema-2", max_per_schema=0)
     other = fetch_job_progress_events(db_path, schema_id="schema-2")
     assert other == []
+
+
+def test_column_profiles_persist_and_fetch(tmp_path: Path) -> None:
+    db_path = tmp_path / "profiles.db"
+    profile = ColumnProfileResult(
+        file_id="input.csv",
+        column_index=1,
+        header="amount",
+        type_distribution={"integer": 2, "null": 1},
+        unique_estimate=2,
+        null_count=1,
+        total_values=3,
+        numeric_min=10.0,
+        numeric_max=25.0,
+        date_min=None,
+        date_max=None,
+    )
+    persist_column_profiles(db_path, [profile])
+
+    rebuilt = fetch_column_profiles(db_path)
+    assert len(rebuilt) == 1
+    restored = rebuilt[0]
+    assert restored.header == "amount"
+    assert restored.numeric_max == 25.0
+    assert restored.type_distribution["integer"] == 2
 
 
 def test_initialize_applies_all_migrations(tmp_path: Path) -> None:

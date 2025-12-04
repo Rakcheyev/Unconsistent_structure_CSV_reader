@@ -4,13 +4,14 @@
    - Drag&Drop / file picker, швидкий підрахунок розміру та рядків.
    - Жодних рішень з боку користувача, лише валідація й підтвердження запуску аналізу.
 2. **Analyze Schemas (Phase 1)**
-   - Прохід файла блоками, побудова `FileBlock` + `SchemaSignature`.
+   - Прохід файла блоками, побудова `FileBlock` + `SchemaSignature` + `ColumnProfile` (HLL-lite унікальність, null %, top tokens, numeric/date min-max).
+   - Колонковий профайлер стрімить результати у `mapping.column_profiles.json` та таблицю SQLite `column_profiles`, а також повертає агрегати до `HeaderMetadata` для подальших фаз.
    - Запуск у `ProcessPoolExecutor`, UI лише слухає прогрес і логі.
 3. **Review & Edit Schemas (Phase 1.5)**
-   - Новий `HeaderClusterizer` запускається одразу після аналізу: будує граф подібності між усіма зафіксованими заголовками, розраховує `canonical_name`, `confidence_score`, `needs_review` і зберігає результат в `mapping.header_clusters` + SQLite.
-   - Карточки схем, merge/compare, нормалізація назв колонок, confidence-пороги ґрунтуються на цих кластерах та type profile'ах.
+   - `HeaderClusterizer` запускається одразу після аналізу: будує граф подібності між усіма зафіксованими заголовками, розраховує `canonical_name`, `confidence_score`, `needs_review` та зберігає результат у `mapping.header_clusters` + SQLite + окремий артефакт `mapping.header_clusters.json`.
+   - Карточки схем, merge/compare, нормалізація назв колонок, confidence-пороги ґрунтуються на цих кластерах, type profile'ах і живих колонкових профілях (щоб виявити несумісність типів ще до review).
 4. **Normalize Values & Types**
-   - Column profiler, виявлення аномалій, синоніми й очищення значень.
+   - Режим нормалізації використовує профайлінг + `schema_mapping`: автоматично підтягує синтаксичні синоніми, перевіряє типову поведінку (null %, діапазони) та застосовує фолбек RowNormalizer'а до позицій стовпчиків, якщо `canonical_name` ще не підтверджений користувачем.
 5. **Materialize Datasets (Phase 2)**
    - Chunked writers (CSV, реальний Parquet через PyArrow, SQLite database) з валідаційними лічильниками, spill-to-temp telemetry (`spills`, `rows_spilled`) і максимум двома активними job'ами.
    - Планувальник формує артефакт `materialization_plan.json`, job runner пише результати у `artifacts/output/`, а `--sqlite-db` додає запис у `job_metrics` (rows, rows/s, short/long rows).

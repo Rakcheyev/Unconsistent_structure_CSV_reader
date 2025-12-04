@@ -16,6 +16,7 @@
 3. **Review & Edit Schemas**
    - Card view: name, columns, blocks count, confidence.
    - Дії: Rename, View, Delete, Merge.
+   - Badge `Column Health` показує null %, unique %, top values (натягується з `mapping.column_profiles`); клік відкриває розкладку профілю з графіками.
 4. **Column Name Normalization**
    - Таблиця Raw → Suggestion → Normalized з кольоровими порогами:
      - `>=0.90` зелений, auto-accept.
@@ -23,8 +24,9 @@
      - `0.55-0.74` жовтий, потребує підтвердження.
      - `0.40-0.54` помаранчевий, manual only.
      - `<0.40` сірий, нова колонка.
+   - Hover по колонці показує міні-профайл (тип, min/max, top-значення) + позначку, якщо тип профілю не співпадає з canonical target.
 5. **Normalize Values & Types**
-   - Column profiler (% нулів, % унікальних, top values, min/max).
+   - Column profiler (% нулів, % унікальних, top values, min/max) підтягується напряму з артефакту `mapping.column_profiles.json` або SQLite `column_profiles`.
    - Дії очищення: trim, cast, replace, date parsing.
 6. **Materialization Job Runner**
    - Статус, прогрес-бар, files processed, rows processed, ETA, кнопки Show log / Stop job.

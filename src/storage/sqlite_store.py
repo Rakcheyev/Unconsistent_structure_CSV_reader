@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterable, List, Sequence
 
 from common.models import (
+    ColumnProfileResult,
     FileHeaderSummary,
     FileProgress,
     HeaderOccurrence,
@@ -153,6 +154,27 @@ MIGRATIONS: List[tuple[int, List[str]]] = [
             """,
         ],
     ),
+    (
+        3,
+        [
+            """
+            CREATE TABLE IF NOT EXISTS column_profiles (
+                file_id TEXT NOT NULL,
+                column_index INTEGER NOT NULL,
+                header TEXT,
+                type_distribution_json TEXT NOT NULL,
+                unique_estimate INTEGER NOT NULL,
+                null_count INTEGER NOT NULL,
+                total_values INTEGER NOT NULL,
+                numeric_min REAL,
+                numeric_max REAL,
+                date_min TEXT,
+                date_max TEXT,
+                PRIMARY KEY (file_id, column_index)
+            )
+            """,
+        ],
+    ),
 ]
 
 MAX_PROGRESS_EVENTS_PER_SCHEMA = 500
@@ -229,6 +251,93 @@ def persist_header_metadata(
                 ),
             )
         conn.commit()
+
+
+def persist_column_profiles(db_path: Path, profiles: Sequence[ColumnProfileResult]) -> None:
+    initialize(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM column_profiles")
+        if profiles:
+            conn.executemany(
+                """
+                INSERT INTO column_profiles(
+                    file_id,
+                    column_index,
+                    header,
+                    type_distribution_json,
+                    unique_estimate,
+                    null_count,
+                    total_values,
+                    numeric_min,
+                    numeric_max,
+                    date_min,
+                    date_max
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        item.file_id,
+                        item.column_index,
+                        item.header,
+                        json.dumps(item.type_distribution, ensure_ascii=False),
+                        item.unique_estimate,
+                        item.null_count,
+                        item.total_values,
+                        item.numeric_min,
+                        item.numeric_max,
+                        item.date_min,
+                        item.date_max,
+                    )
+                    for item in profiles
+                ),
+            )
+        conn.commit()
+
+
+def fetch_column_profiles(db_path: Path) -> List[ColumnProfileResult]:
+    initialize(db_path)
+    items: List[ColumnProfileResult] = []
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute(
+            """
+            SELECT file_id, column_index, header, type_distribution_json, unique_estimate,
+                   null_count, total_values, numeric_min, numeric_max, date_min, date_max
+            FROM column_profiles
+            ORDER BY file_id, column_index
+            """
+        )
+        for (
+            file_id,
+            column_index,
+            header,
+            type_json,
+            unique_estimate,
+            null_count,
+            total_values,
+            numeric_min,
+            numeric_max,
+            date_min,
+            date_max,
+        ) in cursor.fetchall():
+            items.append(
+                ColumnProfileResult(
+                    file_id=str(file_id or ""),
+                    column_index=int(column_index),
+                    header=str(header or ""),
+                    type_distribution={
+                        str(k): int(v)
+                        for k, v in json.loads(type_json or "{}").items()
+                    },
+                    unique_estimate=int(unique_estimate or 0),
+                    null_count=int(null_count or 0),
+                    total_values=int(total_values or 0),
+                    numeric_min=float(numeric_min) if numeric_min is not None else None,
+                    numeric_max=float(numeric_max) if numeric_max is not None else None,
+                    date_min=str(date_min) if date_min else None,
+                    date_max=str(date_max) if date_max else None,
+                )
+            )
+    return items
 
 
 def fetch_file_headers(db_path: Path) -> List[FileHeaderSummary]:
