@@ -1,0 +1,132 @@
+{
+  "schemas": [
+    {
+      "schema_id": "retail_orders",
+      "namespace": "retail",
+      "version": "2025-12-04",
+      "display_name": "Retail Orders v1",
+      "description": "Normalized order feed combining CSV drops from multiple vendors.",
+      "primary_key": ["order_id"],
+      "tags": ["orders", "phase2"],
+      "columns": [
+        {
+          "name": "order_id",
+          "data_type": "string",
+          "description": "Canonical order identifier",
+          "required": true,
+          "allow_null": false,
+          "example": "ORD-00001"
+        },
+        {
+          "name": "order_date",
+          "data_type": "date",
+          "description": "ISO8601 order placement date",
+          "required": true,
+          "allow_null": false,
+          "pattern": "YYYY-MM-DD"
+        },
+        {
+          "name": "customer_email",
+          "data_type": "string",
+          "description": "Lowercased email used for notifications",
+          "required": true,
+          "allow_null": false,
+          "pattern": "email"
+        },
+        {
+          "name": "status",
+          "data_type": "string",
+          "description": "Current fulfillment status",
+          "required": true,
+          "allow_null": false,
+          "allowed_values": [
+            "pending",
+            "paid",
+            "shipped",
+            "cancelled"
+          ]
+        },
+        {
+          "name": "gross_total",
+          "data_type": "decimal",
+          "description": "Gross order amount in cents",
+          "required": true,
+          "allow_null": false,
+          "min_value": 0.0
+        },
+        {
+          "name": "tax_total",
+          "data_type": "decimal",
+          "description": "Tax amount in cents",
+          "required": false,
+          "allow_null": true,
+          "min_value": 0.0
+        },
+        {
+          "name": "currency",
+          "data_type": "string",
+          "description": "ISO 4217 currency code",
+          "required": true,
+          "allow_null": false,
+          "allowed_values": ["USD", "EUR", "GBP"],
+          "example": "USD"
+        },
+        {
+          "name": "items",
+          "data_type": "json",
+          "description": "Serialized list of line items (Phase 2 target)",
+          "required": false,
+          "allow_null": true
+        }
+      ]
+    },
+    {
+      "schema_id": "store_inventory",
+      "namespace": "retail",
+      "version": "2025-12-04",
+      "display_name": "Store Inventory Snapshot",
+      "description": "Daily snapshot per location used by validation tests.",
+      "primary_key": ["location_id", "sku"],
+      "tags": ["inventory", "phase2"],
+      "columns": [
+        {
+          "name": "location_id",
+          "data_type": "string",
+          "description": "Canonical store identifier",
+          "required": true,
+          "allow_null": false
+        },
+        {
+          "name": "sku",
+          "data_type": "string",
+          "description": "Normalized SKU",
+          "required": true,
+          "allow_null": false
+        },
+        {
+          "name": "quantity_on_hand",
+          "data_type": "int",
+          "description": "Units currently on hand",
+          "required": true,
+          "allow_null": false,
+          "min_value": 0.0
+        },
+        {
+          "name": "safety_stock",
+          "data_type": "int",
+          "description": "Safety stock threshold",
+          "required": false,
+          "allow_null": true,
+          "min_value": 0.0
+        },
+        {
+          "name": "last_restock_at",
+          "data_type": "datetime",
+          "description": "Timestamp of the last restock event",
+          "required": false,
+          "allow_null": true
+        }
+      ]
+    }
+  ]
+}

@@ -3,7 +3,8 @@
   "global": {
     "encoding": "utf-8",
     "error_policy": "fail-fast",
-    "synonym_dictionary": "storage/synonyms.json"
+    "synonym_dictionary": "storage/synonyms.json",
+    "canonical_schema_path": "storage/canonical_schemas.json"
   },
   "profiles": {
     "low_memory": {

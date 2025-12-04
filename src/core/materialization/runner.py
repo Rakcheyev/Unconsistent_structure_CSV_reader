@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import csv
+from datetime import date, datetime
 import json
 import sqlite3
 import threading
@@ -15,6 +16,8 @@ from uuid import uuid4
 
 from common.config import error_mode_from_policy
 from common.models import (
+    CanonicalSchema,
+    CanonicalSchemaRegistry,
     ColumnProfileResult,
     FileBlock,
     FileProgress,
@@ -26,6 +29,8 @@ from common.models import (
     SpillMetrics,
     ValidationSummary,
 )
+from common.text import slugify
+from core.validation.canonical import resolve_canonical_schema
 
 try:  # pragma: no cover - optional dependency validated via tests
     import pyarrow as pa
@@ -57,10 +62,6 @@ class JobSummary:
             validation=self.validation,
             spill_metrics=self.spill_metrics,
         )
-
-
-def _slugify(value: str) -> str:
-    return "".join(ch for ch in value.lower() if ch.isalnum())
 
 
 class RowNormalizer:
@@ -122,11 +123,11 @@ class RowNormalizer:
         if slug_map is None:
             slug_map = {}
             for column in schema.columns:
-                slug = _slugify(column.normalized_name or column.raw_name)
+                slug = slugify(column.normalized_name or column.raw_name)
                 if slug and slug not in slug_map:
                     slug_map[slug] = column.index
             self._schema_slug_cache[schema_id] = slug_map
-        target = slug_map.get(_slugify(entry.canonical_name))
+        target = slug_map.get(slugify(entry.canonical_name))
         if target is not None:
             return target
         return self._match_by_type(entry, schema)
@@ -230,6 +231,7 @@ class MaterializationJobRunner:
         telemetry_log: Optional[Path] = None,
         db_url: Optional[str] = None,
         max_jobs: Optional[int] = None,
+        canonical_registry: CanonicalSchemaRegistry | None = None,
     ) -> None:
         self.config = config
         self.encoding = config.global_settings.encoding
@@ -245,6 +247,7 @@ class MaterializationJobRunner:
         self.telemetry_log = telemetry_log
         self.db_url = db_url
         self.progress_granularity = max(1_000, self.chunk_rows)
+        self.canonical_registry = canonical_registry
 
     def run(
         self,
@@ -305,6 +308,7 @@ class MaterializationJobRunner:
         schema_id = str(schema.id)
         checkpoint = self.checkpoints.get(schema_id)
         start_block = checkpoint.get("next_block", 0) if checkpoint else 0
+        canonical_schema = resolve_canonical_schema(schema, self.canonical_registry)
         writer = build_schema_writer(
             format_name=self.writer_format,
             schema=schema,
@@ -314,6 +318,7 @@ class MaterializationJobRunner:
             errors=self.errors,
             checkpoint=checkpoint,
             db_url=self.db_url,
+            canonical_schema=canonical_schema,
         )
         spooler = SpillBuffer(
             writer=writer,
@@ -471,6 +476,7 @@ def build_schema_writer(
     errors: str,
     checkpoint: Optional[Dict[str, object]] = None,
     db_url: Optional[str] = None,
+    canonical_schema: CanonicalSchema | None = None,
 ) -> BaseSchemaWriter:
     if format_name == "parquet":
         return ParquetSchemaWriter(
@@ -480,6 +486,7 @@ def build_schema_writer(
             encoding=encoding,
             errors=errors,
             checkpoint=checkpoint,
+            canonical_schema=canonical_schema,
         )
     if format_name == "database":
         return DatabaseSchemaWriter(
@@ -490,6 +497,7 @@ def build_schema_writer(
             errors=errors,
             checkpoint=checkpoint,
             db_url=db_url,
+            canonical_schema=canonical_schema,
         )
     return CSVSchemaWriter(
         schema,
@@ -498,18 +506,94 @@ def build_schema_writer(
         encoding=encoding,
         errors=errors,
         checkpoint=checkpoint,
+        canonical_schema=canonical_schema,
     )
+
+
+class CanonicalValidator:
+    """Per-row validator that enforces canonical contract requirements."""
+
+    def __init__(self, schema: SchemaDefinition, canonical_schema: CanonicalSchema | None) -> None:
+        self._schema = schema
+        self._canonical_schema = canonical_schema
+        self._column_index = self._build_index(schema)
+        self.missing_required = 0
+        self.type_mismatches = 0
+
+    def validate(self, values: Sequence[str]) -> None:
+        if self._canonical_schema is None:
+            return
+        width = len(values)
+        for spec in self._canonical_schema.columns:
+            slug = slugify(spec.name)
+            if not slug:
+                continue
+            column_index = self._column_index.get(slug)
+            value = values[column_index] if column_index is not None and column_index < width else ""
+            if not value.strip():
+                if spec.required and not spec.allow_null:
+                    self.missing_required += 1
+                continue
+            if spec.allowed_values and value not in spec.allowed_values:
+                self.type_mismatches += 1
+                continue
+            if not self._value_matches_type(spec, value):
+                self.type_mismatches += 1
+
+    def _build_index(self, schema: SchemaDefinition) -> Dict[str, int]:
+        mapping: Dict[str, int] = {}
+        for column in schema.columns:
+            slug = slugify(column.normalized_name or column.raw_name or f"column_{column.index + 1}")
+            if slug and slug not in mapping:
+                mapping[slug] = column.index
+        return mapping
+
+    def _value_matches_type(self, spec, value: str) -> bool:
+        data_type = (spec.data_type or "string").lower()
+        try:
+            if data_type in {"string"}:
+                return True
+            if data_type in {"int", "integer"}:
+                numeric_value = int(value)
+                return self._check_bounds(spec, float(numeric_value))
+            if data_type in {"float", "double", "decimal", "number"}:
+                numeric_value = float(value)
+                return self._check_bounds(spec, numeric_value)
+            if data_type in {"bool", "boolean"}:
+                normalized = value.strip().lower()
+                return normalized in {"true", "false", "1", "0", "yes", "no"}
+            if data_type == "date":
+                date.fromisoformat(value)
+                return True
+            if data_type == "datetime":
+                datetime.fromisoformat(value)
+                return True
+            if data_type == "json":
+                json.loads(value)
+                return True
+        except Exception:
+            return False
+        return True
+
+    @staticmethod
+    def _check_bounds(spec, numeric_value: float) -> bool:
+        if spec.min_value is not None and numeric_value < spec.min_value:
+            return False
+        if spec.max_value is not None and numeric_value > spec.max_value:
+            return False
+        return True
 
 
 class ValidationTracker:
     """Normalizes rows to schema width and records validation stats."""
 
-    def __init__(self, expected_columns: int) -> None:
+    def __init__(self, expected_columns: int, *, canonical_validator: CanonicalValidator | None = None) -> None:
         self.expected_columns = max(1, expected_columns)
         self.total_rows = 0
         self.short_rows = 0
         self.long_rows = 0
         self.empty_rows = 0
+        self._canonical_validator = canonical_validator
 
     def normalize(self, values: Sequence[str], *, observed_length: Optional[int] = None) -> List[str]:
         normalized = list(values)
@@ -530,15 +614,21 @@ class ValidationTracker:
                 normalized.extend([""] * (self.expected_columns - len(normalized)))
             elif len(normalized) > self.expected_columns:
                 normalized = normalized[: self.expected_columns]
+        if self._canonical_validator is not None:
+            self._canonical_validator.validate(normalized)
         self.total_rows += 1
         return normalized
 
     def summary(self) -> ValidationSummary:
+        missing_required = self._canonical_validator.missing_required if self._canonical_validator else 0
+        type_mismatches = self._canonical_validator.type_mismatches if self._canonical_validator else 0
         return ValidationSummary(
             total_rows=self.total_rows,
             short_rows=self.short_rows,
             long_rows=self.long_rows,
             empty_rows=self.empty_rows,
+            missing_required=missing_required,
+            type_mismatches=type_mismatches,
         )
 
 
@@ -554,6 +644,7 @@ class BaseSchemaWriter(ABC):
         encoding: str,
         errors: str,
         checkpoint: Optional[Dict[str, object]] = None,
+        canonical_schema: CanonicalSchema | None = None,
     ) -> None:
         self.schema = schema
         self.dest_dir = dest_dir
@@ -572,7 +663,15 @@ class BaseSchemaWriter(ABC):
         self.total_rows = int(checkpoint.get("total_rows", 0)) if checkpoint else 0
         self.output_files: List[str] = list(checkpoint.get("output_files", [])) if checkpoint else []
         self._handle: Optional[TextIO] = None
-        self.validation = ValidationTracker(len(self.header))
+        canonical_validator = (
+            CanonicalValidator(schema, canonical_schema)
+            if canonical_schema is not None
+            else None
+        )
+        self.validation = ValidationTracker(
+            len(self.header),
+            canonical_validator=canonical_validator,
+        )
         if self.rows_in_chunk > 0:
             self._open_current(append=True)
         else:

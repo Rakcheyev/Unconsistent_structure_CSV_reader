@@ -14,7 +14,9 @@ All notable changes to this project will be documented in this file.
 - Optional SQLite persistence + audit logging toggled via `--sqlite-db` for analyze/review/normalize/materialize flows.
 - Materialization job runner with chunked CSV writers, checkpoint/resume support, and CLI integration that limits active writers to two concurrent schemas.
 - Tests covering the materialization runner to ensure chunk rotation and resume metadata stay consistent.
+- Canonical schema fixture + registry loader (`storage/canonical_schemas.json` + `core.validation.load_canonical_registry`) power CLI/agents, and schemas now persist `canonical_schema_id` metadata for downstream validation.
 - Validation counters (short/long rows), spill-to-temp telemetry, writer-format flags (CSV/Parquet stub/DB bulk), and per-schema telemetry JSONL logging.
+- Canonical validator enforces required columns + type rules during materialization, surfaces `missing_required` / `type_mismatches` in `ValidationSummary`, and records the counts in SQLite job metrics + telemetry.
 - SQLite `job_metrics` table with CLI helpers to persist rows/s + validation warnings for every materialization job.
 - Real Parquet output via PyArrow and SQLite database writers hooked into `--writer-format` (with `--db-url`), plus ATA-friendly `FileProgress` events for Phase 2.
 - UI/storage wiring for progress telemetry: `FileProgress` now carries schema metadata + rows/s, CLI persists every tick into SQLite `job_progress_events` alongside live console rendering.

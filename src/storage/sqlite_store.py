@@ -405,6 +405,8 @@ def record_job_metrics(db_path: Path, metrics: JobMetrics) -> None:
             "short_rows": validation.short_rows,
             "long_rows": validation.long_rows,
             "empty_rows": validation.empty_rows,
+            "missing_required": validation.missing_required,
+            "type_mismatches": validation.type_mismatches,
         },
         "spill": {
             "spills": spill.spills,
@@ -413,7 +415,12 @@ def record_job_metrics(db_path: Path, metrics: JobMetrics) -> None:
             "max_buffer_rows": spill.max_buffer_rows,
         },
     }
-    error_count = validation.short_rows + validation.long_rows
+    error_count = (
+        validation.short_rows
+        + validation.long_rows
+        + validation.missing_required
+        + validation.type_mismatches
+    )
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """

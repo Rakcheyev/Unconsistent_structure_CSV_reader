@@ -4,9 +4,13 @@ import sqlite3
 from pathlib import Path
 from uuid import uuid4
 
-import pyarrow.parquet as pq
+import pytest
+pq = pytest.importorskip("pyarrow.parquet", reason="pyarrow is required for parquet writer tests")
 
 from common.models import (
+    CanonicalColumnSpec,
+    CanonicalSchema,
+    CanonicalSchemaRegistry,
     FileBlock,
     FileProgress,
     MappingConfig,
@@ -195,3 +199,62 @@ def test_materialization_runner_emits_progress(tmp_path: Path) -> None:
     assert final.total_rows >= final.processed_rows
     assert final.schema_id == str(schema_id)
     assert final.rows_per_second is not None
+
+
+def test_materialization_runner_enforces_canonical_contract(tmp_path: Path) -> None:
+    input_csv = tmp_path / "customers_contract.csv"
+    input_csv.write_text(
+        "name,email,age\n"
+        "Alice,a@example.com,30\n"
+        "Bob,,thirty\n",
+        encoding="utf-8",
+    )
+    schema_id = uuid4()
+    schema = SchemaDefinition(
+        id=schema_id,
+        name="retail_orders",
+        canonical_schema_id="retail_orders",
+        canonical_namespace="retail",
+        columns=[
+            SchemaColumn(index=0, raw_name="name", normalized_name="name"),
+            SchemaColumn(index=1, raw_name="email", normalized_name="email"),
+            SchemaColumn(index=2, raw_name="age", normalized_name="age"),
+        ],
+    )
+    block = FileBlock(
+        file_path=input_csv,
+        block_id=0,
+        start_line=0,
+        end_line=2,
+        signature=SchemaSignature(delimiter=",", column_count=3, header_sample="name,email,age"),
+        schema_id=schema_id,
+    )
+    registry = CanonicalSchemaRegistry()
+    registry.register(
+        CanonicalSchema(
+            schema_id="retail_orders",
+            display_name="Retail Orders",
+            version="1",
+            namespace="retail",
+            columns=[
+                CanonicalColumnSpec(name="name", data_type="string", required=True, allow_null=False),
+                CanonicalColumnSpec(name="email", data_type="string", required=True, allow_null=False),
+                CanonicalColumnSpec(name="age", data_type="int", required=False, allow_null=True, min_value=0.0),
+            ],
+        )
+    )
+
+    runner = MaterializationJobRunner(
+        build_runtime(chunk_rows=2),
+        checkpoint_path=tmp_path / "checkpoint_contract.json",
+        writer_format="csv",
+        canonical_registry=registry,
+    )
+    summary = runner.run(
+        MappingConfig(blocks=[block], schemas=[schema]),
+        dest_dir=tmp_path / "out_contract",
+        max_jobs=1,
+    )[0]
+
+    assert summary.validation.missing_required == 1
+    assert summary.validation.type_mismatches == 1

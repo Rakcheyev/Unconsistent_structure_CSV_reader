@@ -305,11 +305,16 @@ def deserialize_column_stats(data: Dict[str, object], *, index: int = 0) -> Colu
 
 
 def serialize_schema(schema: SchemaDefinition) -> Dict[str, object]:
-    return {
+    payload: Dict[str, object] = {
         "id": str(schema.id),
         "name": schema.name,
         "columns": [serialize_schema_column(col) for col in schema.columns],
     }
+    if schema.canonical_schema_id:
+        payload["canonical_schema_id"] = schema.canonical_schema_id
+    if schema.canonical_namespace:
+        payload["canonical_namespace"] = schema.canonical_namespace
+    return payload
 
 
 def deserialize_schema(data: Dict[str, object]) -> SchemaDefinition:
@@ -318,6 +323,8 @@ def deserialize_schema(data: Dict[str, object]) -> SchemaDefinition:
         id=UUID(data["id"]),
         name=str(data.get("name", "")),
         columns=[deserialize_schema_column(item) for item in columns_data],
+        canonical_schema_id=str(data["canonical_schema_id"]) if data.get("canonical_schema_id") else None,
+        canonical_namespace=str(data["canonical_namespace"]) if data.get("canonical_namespace") else None,
     )
 
 

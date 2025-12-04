@@ -30,6 +30,7 @@ from core.mapping.offset_detection import detect_offsets
 from core.mapping import MappingService
 from core.materialization import MaterializationPlanner, MaterializationJobRunner
 from core.normalization import NormalizationService, SynonymDictionary
+from core.validation import load_canonical_registry
 from storage import (
     init_sqlite,
     load_mapping_config,
@@ -253,8 +254,9 @@ def command_normalize(args: argparse.Namespace) -> None:
     runtime = load_runtime_config(profile=args.profile)
     mapping = load_mapping_config(Path(args.mapping))
     synonyms = load_synonyms(args.synonyms, runtime)
+    canonical_registry = load_canonical_registry(Path(runtime.global_settings.canonical_schema_path))
 
-    service = NormalizationService(synonyms)
+    service = NormalizationService(synonyms, canonical_registry=canonical_registry)
     service.apply(mapping)
 
     output_path = Path(args.output)
@@ -266,6 +268,7 @@ def command_normalize(args: argparse.Namespace) -> None:
 def command_materialize(args: argparse.Namespace) -> None:
     runtime = load_runtime_config(profile=args.profile)
     mapping = load_mapping_config(Path(args.mapping))
+    canonical_registry = load_canonical_registry(Path(runtime.global_settings.canonical_schema_path))
     print(f"[materialize] Loaded mapping: {args.mapping} blocks={len(mapping.blocks)} schemas={len(mapping.schemas)}")
 
     if not mapping.schema_mapping and mapping.header_clusters:
@@ -307,6 +310,7 @@ def command_materialize(args: argparse.Namespace) -> None:
         spill_threshold=args.spill_threshold,
         telemetry_log=telemetry_log,
         db_url=args.db_url,
+        canonical_registry=canonical_registry,
     )
     try:
         summaries = runner.run(mapping, dest_dir, progress_callback=combined_progress)
@@ -321,6 +325,7 @@ def command_materialize(args: argparse.Namespace) -> None:
             spill_threshold=args.spill_threshold,
             telemetry_log=telemetry_log,
             db_url=args.db_url,
+            canonical_registry=canonical_registry,
         )
         summaries = runner.run(mapping, dest_dir, progress_callback=combined_progress)
 

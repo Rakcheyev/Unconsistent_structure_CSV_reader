@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Literal, Optional, Set, Tuple, Union
 from uuid import UUID, uuid4
 
 
@@ -49,8 +49,20 @@ class SchemaColumn:
     index: int
     raw_name: str = ""
     normalized_name: str = ""
-    data_type: str = "string"  # string,int,decimal,date,bool
+    data_type: Union[str, "SchemaDataType"] = "string"
     known_variants: List[str] = field(default_factory=list)
+
+
+SchemaDataType = Literal[
+    "string",
+    "int",
+    "float",
+    "decimal",
+    "bool",
+    "date",
+    "datetime",
+    "json",
+]
 
 
 @dataclass(slots=True)
@@ -60,6 +72,128 @@ class SchemaDefinition:
     id: UUID = field(default_factory=uuid4)
     name: str = ""
     columns: List[SchemaColumn] = field(default_factory=list)
+    canonical_schema_id: Optional[str] = None
+    canonical_namespace: Optional[str] = None
+
+
+@dataclass(slots=True)
+class CanonicalColumnSpec:
+    """Strict definition for a canonical column used by validation layers."""
+
+    name: str
+    data_type: SchemaDataType
+    description: str = ""
+    required: bool = True
+    allow_null: bool = False
+    example: Optional[str] = None
+    allowed_values: Optional[Set[str]] = None
+    min_value: Optional[float] = None
+    max_value: Optional[float] = None
+    pattern: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, object]:
+        """Serialize to JSON-friendly dict."""
+
+        return {
+            "name": self.name,
+            "data_type": self.data_type,
+            "description": self.description,
+            "required": self.required,
+            "allow_null": self.allow_null,
+            "example": self.example,
+            "allowed_values": sorted(self.allowed_values) if self.allowed_values else None,
+            "min_value": self.min_value,
+            "max_value": self.max_value,
+            "pattern": self.pattern,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, object]) -> "CanonicalColumnSpec":
+        allowed_values = payload.get("allowed_values")
+        return cls(
+            name=str(payload["name"]),
+            data_type=payload.get("data_type", "string"),
+            description=str(payload.get("description", "")),
+            required=bool(payload.get("required", True)),
+            allow_null=bool(payload.get("allow_null", False)),
+            example=payload.get("example"),
+            allowed_values=set(allowed_values) if allowed_values else None,
+            min_value=payload.get("min_value"),
+            max_value=payload.get("max_value"),
+            pattern=payload.get("pattern"),
+        )
+
+
+@dataclass(slots=True)
+class CanonicalSchema:
+    """Versioned canonical schema contract shared across agents."""
+
+    schema_id: str
+    display_name: str
+    version: str
+    namespace: str = "default"
+    description: str = ""
+    columns: List[CanonicalColumnSpec] = field(default_factory=list)
+    primary_key: List[str] = field(default_factory=list)
+    tags: Set[str] = field(default_factory=set)
+
+    def column_names(self) -> List[str]:
+        return [column.name for column in self.columns]
+
+    def required_columns(self) -> List[str]:
+        return [column.name for column in self.columns if column.required]
+
+    def to_dict(self) -> Dict[str, object]:
+        """Serialize canonical schema to plain dict for fixtures/backups."""
+
+        return {
+            "schema_id": self.schema_id,
+            "display_name": self.display_name,
+            "version": self.version,
+            "namespace": self.namespace,
+            "description": self.description,
+            "primary_key": list(self.primary_key),
+            "tags": sorted(self.tags),
+            "columns": [column.to_dict() for column in self.columns],
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, object]) -> "CanonicalSchema":
+        columns = [
+            CanonicalColumnSpec.from_dict(column_payload)
+            for column_payload in payload.get("columns", [])
+        ]
+        tags = payload.get("tags") or []
+        return cls(
+            schema_id=str(payload["schema_id"]),
+            display_name=str(payload.get("display_name", payload["schema_id"])),
+            version=str(payload.get("version", "1.0.0")),
+            namespace=str(payload.get("namespace", "default")),
+            description=str(payload.get("description", "")),
+            columns=columns,
+            primary_key=list(payload.get("primary_key", [])),
+            tags=set(tags),
+        )
+
+
+@dataclass(slots=True)
+class CanonicalSchemaRegistry:
+    """In-memory registry of approved canonical schemas."""
+
+    schemas: Dict[str, CanonicalSchema] = field(default_factory=dict)
+
+    def _make_key(self, schema_id: str, namespace: Optional[str]) -> str:
+        ns = namespace or "default"
+        return f"{ns}::{schema_id}"
+
+    def register(self, schema: CanonicalSchema) -> None:
+        """Register/overwrite a schema version inside the registry."""
+
+        key = self._make_key(schema.schema_id, schema.namespace)
+        self.schemas[key] = schema
+
+    def get(self, schema_id: str, namespace: Optional[str] = None) -> Optional[CanonicalSchema]:
+        return self.schemas.get(self._make_key(schema_id, namespace))
 
 
 @dataclass(slots=True)
@@ -207,6 +341,7 @@ class GlobalSettings:
     encoding: str = "utf-8"
     error_policy: str = "fail-fast"  # fail-fast | replace
     synonym_dictionary: str = "storage/synonyms.json"
+    canonical_schema_path: str = "storage/canonical_schemas.json"
 
 
 @dataclass(slots=True)
@@ -255,6 +390,8 @@ class ValidationSummary:
     short_rows: int = 0
     long_rows: int = 0
     empty_rows: int = 0
+    missing_required: int = 0
+    type_mismatches: int = 0
 
 
 @dataclass(slots=True)

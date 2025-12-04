@@ -43,6 +43,9 @@ def load_runtime_config(
         synonym_dictionary=global_data.get(
             "synonym_dictionary", GlobalSettings().synonym_dictionary
         ),
+        canonical_schema_path=global_data.get(
+            "canonical_schema_path", GlobalSettings().canonical_schema_path
+        ),
     )
 
     required_fields = (
