@@ -26,3 +26,10 @@
    - Стрімінговий профайлер (null %, HLL unique, min/max, top tokens) заповнює `ColumnProfile` об'єкти для кожного файлу/колонки.
    - Артефакти: `mapping.column_profiles.json`, SQLite `column_profiles`, in-memory злив у `HeaderMetadata` для кластеризатора/RowNormalizer.
    - Status: done (owner: core.analysis.column_profiler). Next: feed anomalies у Phase 1.5 cards та Normalize Values stage.
+
+9. **Resource Manager (Backend-03)**
+   - Єдиний `ResourceManager` модуль контролює бюджети RAM/disk/workers/temp-dir. API: `request(memory_mb=?, disk_mb=?, workers=?) -> lease` із автоматичним `release()`/context manager, `plan_workers(requested)` повертає безпечну кількість потоків/екзек’юторів, `scratch_dir(job_id, *segments)` створює підкаталоги у `artifacts/tmp` (override через конфіг), `cleanup(job_id)` видаляє тимчасові артефакти після job.
+   - Бюджети походять з профіля (`profile.resource_limits`: `memory_mb`, `spill_mb`, `max_workers`, `temp_dir`). CLI підхоплює значення з `RuntimeConfig` й передає менеджеру у Phase 1/2 ранери.
+   - Документація: додати архітектурну нотатку + README витяг, changelog фіксує появу модуля та нових ключів профілів.
+   - Тести: unit-тести на резерв/звільнення та на те, що `plan_workers` поважає ліміти.
+   - Status: done (owner: `core.resources.manager`, wired via CLI/runtime profiles; covered by `tests/test_resource_manager.py` + `tests/test_materialization_runner.py`, documented в `docs/architecture/resource_manager.md`).

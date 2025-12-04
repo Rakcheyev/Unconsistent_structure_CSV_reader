@@ -9,22 +9,22 @@
 - **Docs** – детальні вимоги до UX, алгоритмів семплінгу та дизайн-рішення загалом.
 
 ## Поточний статус
-- Створені pythonic `dataclasses` у `src/common/models.py`, які відповідають описаним C# моделям.
-- Для кожного блоку додано `TASKS.md` з конкретними TODO і гранулярністю, достатньою для планування спринтів.
-- Файл `AGENTS.md` містить правила координації між агендами/модулями.
-- Додано `pyproject.toml` з мінімальними залежностями та конфігами `ruff`/`mypy` для суворого контролю якості на Python 3.11.
-- Створено `config/defaults.json` із профілями для систем із низькими ресурсами та робочих станцій.
-- Підготовлено bootstrap-скрипти (`scripts/bootstrap_env.ps1` / `.sh`) і smoke-тести в `tests/` із крихітними CSV-фікстурами.
-- Фаза 1 проаналізована з адаптивним throttling, структурованими JSONL прогрес-логами та CLI-бенчмаркером.
-- Phase 2 отримала перший реальний job runner: chunked CSV writers (відновлення з checkpoint, максимум дві паралельні схеми) і SQLite-аудит опційно з кожної CLI-команди.
-- Додано валідаційні лічильники (short/long rows), spill-to-temp telemetry, writer-флаги (`--writer-format`, `--spill-threshold`) і SQLite `job_metrics` з rows/s.
-- Реалізовано справжні Parquet (PyArrow) та SQLite database writers (через `--writer-format=parquet|database` + `--db-url`), а також ETA/`FileProgress` події для Phase 2, щоб UI міг малювати таймлайни матеріалізації.
+- `src/common/models.py` тепер описує повний набір сутностей (блоки, профайли, canonical контракти) + JSON/SQLite серіалізацію без втрати артефактів.
+- Phase 1 має стрімінговий колонний профайлер (null %, HLL-lite уникальні, numeric/date min/max) із артефактами `mapping.column_profiles.json` та таблицею SQLite `column_profiles`.
+- Phase 1.5 запускає графовий `HeaderClusterizer`, зберігає `mapping.header_clusters.json`, а `detect_offsets` генерує `schema_mapping` з confidence/offset метаданими.
+- `NormalizationService` синхронізує схеми з `CanonicalSchemaRegistry` (фікстури в `storage/canonical_schemas.json`) і проставляє `canonical_schema_id`, типи та обов'язковість колонок.
+- Phase 2 `MaterializationJobRunner` підтримує CSV/Parquet/SQLite writers, централізований `CheckpointRegistry` (JSON на `artifacts/checkpoints/<phase>/<job_id>.json`) із `--resume JOB_ID`, дві паралельні джоби, spill-to-temp буфер та ETA/`FileProgress` телеметрію.
+- `CanonicalValidator` під час матеріалізації рахує `missing_required` + `type_mismatches`, доповнюючи класичні short/long row лічильники; усі метрики пишуться в `ValidationSummary`, JSONL та SQLite `job_metrics`.
+- CLI `uscsv` охоплює Import → Analyze → Review → Normalize → Materialize, має бенчмарк/telemetry режими, прапорці `--sqlite-db`, `--telemetry-log`, `--writer-format`, `--spill-threshold`, `--db-url`.
+- Запущено єдиний Job State Machine: `uscsv materialize` приймає `--job-id` (авто-генерується), `JobStateMachine` фіксує переходи `PENDING → MATERIALIZING → VALIDATING → DONE/FAILED`, а SQLite отримав таблиці `job_status` + `job_events` з доступом через `storage.fetch_job_status` (див. `docs/architecture/job_lifecycle.md`).
+- Документація (workflow, UI/UX, sampling, materialization план) та `TASKS.md` синхронізовані зі Sprint 1/2 прогресом; `AGENTS.md` фіксує правила взаємодії агентів.
+- Bootstrap-скрипти (`scripts/bootstrap_env.*`) + smoke-тести (`tests/`) забезпечують швидке стартове середовище, `pyproject.toml` конфігурує `ruff`, `mypy`, `pytest` для Python 3.12.
 
 ## Наступні кроки
-1. Додати lightweight колонний профайлер (reservoir sampling + HLL-lite) і метрики рядків/байтів у SQLite.
-2. Підготувати Parquet/bulk-DB writer за тим самим інтерфейсом, включно з throttlingом.
-3. Розширити `docs/ui_ux.md` моками для schema cards + merge dialog (див. також `docs/schema_review_brief.md`).
-4. Автоматизувати прогін recovery tests: симулювати падіння в середині блока та відновлення з checkpoint.
+1. UX tagging canonical schemas у Phase 1.5: dropdown + CLI fallback, audit entries та масове застосування namespace/schema-id.
+2. Validation roadmap: розширити перевірки типів (enum/domain правила, діапазони) та surfaced counters у CLI/GUI dashboards.
+3. Phase 2 writers: включити DB bulk loaders / Arrow Datasets, покрити recovery/regression сценаріями й telemetry порівняннями.
+4. DX/GUI Sprint 3: DearPyGui/WinUI макети для schema cards, merge dialog, progress history та agents-driven workflows.
 
 ## Hardware Profiles & Setup
 
@@ -48,36 +48,9 @@ $ ./scripts/bootstrap_env.sh --dev
 Скрипти створюють `.venv`, оновлюють `pip` і ставлять поточний пакет (з dev-інструментами за потреби). Це гарантує однакове оточення навіть на версіях Windows Server або мінімальних Linux-боксах.
 
 
-## GUI Workflow (DearPyGui)
+## GUI Status
 
-The project includes a graphical user interface (GUI) built with DearPyGui for easy batch processing and export of CSV/TSV files. The GUI allows you to:
-
-- Select an input folder containing CSV/TSV files
-- Select an output folder for results
-- Choose output format (CSV, JSON)
-- Set memory cap and chunk size
-- View progress and logs during processing
-
-### Running the GUI
-
-To run the GUI from source:
-
-```powershell
-PS> python src/ui/uscsv_gui.py
-```
-
-### Packaging the GUI as an .exe
-
-To create a standalone Windows executable:
-
-```powershell
-PS> pip install pyinstaller
-PS> pyinstaller --onefile src/ui/uscsv_gui.py
-```
-
-The packaged `.exe` will be in the `dist` folder. Copy it to any Windows PC and run directly—no Python required.
-
-### GUI Features
+The legacy DearPyGui desktop interface has been retired and is no longer shipped with the repository. All workflows run through the CLI job system described in `docs/workflows/cli.md`. If you still have the old `src/ui/uscsv_gui.py` locally, treat it as deprecated and avoid using it for new workstreams.
 
 - Batch processing of all CSV/TSV files in the selected folder
 - Output format selection (CSV, JSON)
@@ -98,7 +71,7 @@ The packaged `.exe` will be in the `dist` folder. Copy it to any Windows PC and 
 2. **Бенчмарк** — `uscsv benchmark data/raw --profile workstation --log artifacts/bench.jsonl` для порівняння throughput профілів/машин.
 3. **Рев'ю / кластеризація** — `uscsv review mapping.json --output mapping.review.json --synonyms storage/synonyms.json --sqlite-db artifacts/storage.db` запускає heuristic clustering і синхронізує результати в SQLite.
 4. **Нормалізація назв** — `uscsv normalize mapping.review.json --output mapping.normalized.json --sqlite-db artifacts/storage.db` застосовує словник синонімів.
-5. **Матеріалізація (реальний writer)** — `uscsv materialize mapping.normalized.json --dest artifacts/output --checkpoint artifacts/materialize_checkpoint.json --plan artifacts/materialization_plan.json --writer-format parquet --spill-threshold 20000 --telemetry-log artifacts/materialize_metrics.jsonl --sqlite-db artifacts/storage.db --db-url sqlite:///artifacts/output.db`. Команда створює chunked вихід (CSV, Parquet через PyArrow, або SQLite database) з відновленням по checkpoint, не тримає більше двох активних writers, логуватиме short/long rows, spill events, throughput у SQLite (`job_metrics`) / JSONL та випромінює ETA/`FileProgress` події для UI.
+5. **Матеріалізація (реальний writer)** — `uscsv materialize mapping.normalized.json --dest artifacts/output --checkpoint-dir artifacts/checkpoints --plan artifacts/materialization_plan.json --writer-format parquet --spill-threshold 20000 --telemetry-log artifacts/materialize_metrics.jsonl --sqlite-db artifacts/storage.db --db-url sqlite:///artifacts/output.db [--job-id JOB42]`. Команда створює chunked вихід (CSV, Parquet через PyArrow, або SQLite database) із централізованими checkpoint'ами (`artifacts/checkpoints/materialize/<job_id>.json`), не тримає більше двох активних writers, логуватиме short/long rows, spill events, throughput у SQLite (`job_metrics`) / JSONL та випромінює ETA/`FileProgress` події для UI; прапорець `--job-id` дає змогу спостерігати стан у `job_status`, а `--resume JOB42` відновлює незавершений job із того ж snapshot.
 
 
 Для швидкого smoke-прогону існує `scripts/run_cli_smoke.ps1`, який запускає `uscsv analyze` на `tests/data/retail_small.csv`, а потім автоматично видаляє тимчасові `artifacts/cli_smoke*.{json,db}` незалежно від результату.
