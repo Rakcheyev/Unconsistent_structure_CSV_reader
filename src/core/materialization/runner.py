@@ -21,6 +21,7 @@ from common.models import (
     MappingConfig,
     RuntimeConfig,
     SchemaDefinition,
+    SchemaMappingEntry,
     SpillMetrics,
     ValidationSummary,
 )
@@ -57,15 +58,93 @@ class JobSummary:
         )
 
 
+def _slugify(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
 class RowNormalizer:
-    """Row-level normalizer hook.
+    """Aligns rows to the canonical schema order using schema_mapping entries."""
 
-    For now this is a no-op that preserves values while giving us a
-    single place to plug offset-fix rules (date/url/numeric) later.
-    """
+    def __init__(self, mappings: Sequence[SchemaMappingEntry] | None = None) -> None:
+        self._map = self._build_index(mappings or [])
+        self._schema_slug_cache: Dict[str, Dict[str, int]] = {}
 
-    def normalize(self, row: List[str], schema: SchemaDefinition) -> List[str]:
-        return row
+    def normalize(self, row: List[str], schema: SchemaDefinition, *, source_path: Path) -> "NormalizedRow":
+        observed_length = len(row)
+        mapping = self._map.get(self._key(source_path))
+        if not mapping:
+            return NormalizedRow(list(row), observed_length)
+
+        max_target = mapping["max_target"]
+        working_width = max(observed_length, max_target + 1)
+        working_width = max(working_width, 1)
+        normalized = [""] * working_width
+        assigned = [False] * working_width
+        used_sources: set[int] = set()
+
+        for source_index, entry in mapping["entries"].items():
+            target_index = self._resolve_target_index(entry, schema)
+            if target_index is None:
+                continue
+            if target_index >= working_width:
+                extension = target_index - working_width + 1
+                normalized.extend([""] * extension)
+                assigned.extend([False] * extension)
+                working_width = len(normalized)
+            value = row[source_index] if source_index < len(row) else ""
+            normalized[target_index] = value
+            assigned[target_index] = True
+            used_sources.add(source_index)
+
+        remainder = [row[idx] for idx in range(len(row)) if idx not in used_sources]
+        remainder_iter = iter(remainder)
+        for idx in range(len(normalized)):
+            if assigned[idx]:
+                continue
+            normalized[idx] = next(remainder_iter, "")
+            assigned[idx] = True
+        return NormalizedRow(normalized, observed_length)
+
+    def _resolve_target_index(
+        self, entry: SchemaMappingEntry, schema: SchemaDefinition
+    ) -> int | None:
+        if entry.target_index is not None:
+            return entry.target_index
+        schema_id = str(schema.id)
+        slug_map = self._schema_slug_cache.get(schema_id)
+        if slug_map is None:
+            slug_map = {}
+            for column in schema.columns:
+                slug = _slugify(column.normalized_name or column.raw_name)
+                if slug and slug not in slug_map:
+                    slug_map[slug] = column.index
+            self._schema_slug_cache[schema_id] = slug_map
+        return slug_map.get(_slugify(entry.canonical_name))
+
+    def _key(self, path: Path) -> str:
+        try:
+            return path.resolve().as_posix()
+        except OSError:
+            return path.as_posix()
+
+    def _build_index(
+        self, mappings: Sequence[SchemaMappingEntry]
+    ) -> Dict[str, Dict[str, object]]:
+        index: Dict[str, Dict[str, object]] = {}
+        for entry in mappings:
+            file_key = self._key(entry.file_path)
+            bucket = index.setdefault(file_key, {"entries": {}, "max_target": -1})
+            bucket_entries = bucket["entries"]
+            bucket_entries[entry.source_index] = entry
+            if entry.target_index is not None:
+                bucket["max_target"] = max(bucket["max_target"], entry.target_index)
+        return index
+
+
+@dataclass(slots=True)
+class NormalizedRow:
+    values: List[str]
+    observed_length: int
 
 
 class MaterializationJobRunner:
@@ -120,6 +199,7 @@ class MaterializationJobRunner:
             schema_blocks.setdefault(str(block.schema_id), []).append(block)
         schema_map = {str(schema.id): schema for schema in mapping.schemas}
 
+        schema_mapping_entries = list(mapping.schema_mapping)
         with ThreadPoolExecutor(max_workers=max_jobs) as executor:
             futures = []
             for schema_id, blocks in schema_blocks.items():
@@ -134,6 +214,7 @@ class MaterializationJobRunner:
                         dest_dir,
                         progress_callback,
                         global_seen_lines,
+                        schema_mapping_entries,
                     )
                 )
             for future in futures:
@@ -147,6 +228,7 @@ class MaterializationJobRunner:
         dest_dir: Path,
         progress_callback: Optional[Callable[[FileProgress], None]],
         global_seen_lines: Optional[set[tuple[str, int]]] = None,
+        schema_mappings: Sequence[SchemaMappingEntry] | None = None,
     ) -> JobSummary:
         blocks.sort(key=lambda b: (str(b.file_path), b.start_line))
         schema_id = str(schema.id)
@@ -167,7 +249,7 @@ class MaterializationJobRunner:
             threshold=self.spill_threshold,
             spool_dir=dest_dir / "_spool" / schema_id,
         )
-        normalizer = RowNormalizer()
+        normalizer = RowNormalizer(schema_mappings)
         total_estimated_rows = sum(self._estimate_block_rows(block) for block in blocks)
         processed_rows = writer.total_rows
         next_progress_emit = processed_rows + self.progress_granularity
@@ -189,7 +271,7 @@ class MaterializationJobRunner:
                 seen_lines.add(key)
                 if global_seen_lines is not None:
                     global_seen_lines.add(key)
-                normalized_row = normalizer.normalize(row, schema)
+                normalized_row = normalizer.normalize(row, schema, source_path=block.file_path)
                 spooler.push(normalized_row)
                 processed_rows += 1
                 if (
@@ -358,17 +440,25 @@ class ValidationTracker:
         self.long_rows = 0
         self.empty_rows = 0
 
-    def normalize(self, values: Sequence[str]) -> List[str]:
+    def normalize(self, values: Sequence[str], *, observed_length: Optional[int] = None) -> List[str]:
         normalized = list(values)
         if not any(value.strip() for value in normalized):
             self.empty_rows += 1
-        length = len(normalized)
-        if length < self.expected_columns:
+        length_hint = observed_length if observed_length is not None else len(normalized)
+        if length_hint < self.expected_columns:
             self.short_rows += 1
-            normalized.extend([""] * (self.expected_columns - length))
-        elif length > self.expected_columns:
+            if len(normalized) < self.expected_columns:
+                normalized.extend([""] * (self.expected_columns - len(normalized)))
+            elif len(normalized) > self.expected_columns:
+                normalized = normalized[: self.expected_columns]
+        elif length_hint > self.expected_columns:
             self.long_rows += 1
             normalized = normalized[: self.expected_columns]
+        else:
+            if len(normalized) < self.expected_columns:
+                normalized.extend([""] * (self.expected_columns - len(normalized)))
+            elif len(normalized) > self.expected_columns:
+                normalized = normalized[: self.expected_columns]
         self.total_rows += 1
         return normalized
 
@@ -417,8 +507,8 @@ class BaseSchemaWriter(ABC):
         else:
             self._start_new_chunk()
 
-    def write(self, values: Sequence[str]) -> None:
-        normalized = self.validation.normalize(values)
+    def write(self, values: Sequence[str], *, observed_length: Optional[int] = None) -> None:
+        normalized = self.validation.normalize(values, observed_length=observed_length)
         if self.rows_in_chunk >= self.chunk_rows:
             self.chunk_index += 1
             self._start_new_chunk()
@@ -642,10 +732,10 @@ class SpillBuffer:
         self.writer = writer
         self.threshold = max(1, threshold)
         self.spool_dir = spool_dir
-        self.buffer: List[List[str]] = []
+        self.buffer: List[NormalizedRow] = []
         self.telemetry = SpillMetrics()
 
-    def push(self, row: List[str]) -> None:
+    def push(self, row: NormalizedRow) -> None:
         self.buffer.append(row)
         self.telemetry.max_buffer_rows = max(self.telemetry.max_buffer_rows, len(self.buffer))
         if len(self.buffer) >= self.threshold:
@@ -655,7 +745,7 @@ class SpillBuffer:
         if not self.buffer:
             return
         for row in self.buffer:
-            self.writer.write(row)
+            self.writer.write(row.values, observed_length=row.observed_length)
         self.buffer.clear()
 
     def close(self) -> None:
@@ -666,7 +756,8 @@ class SpillBuffer:
         spill_path = self.spool_dir / f"spill_{uuid4().hex}.jsonl"
         with spill_path.open("w", encoding="utf-8") as handle:
             for row in self.buffer:
-                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+                payload = {"values": row.values, "observed_length": row.observed_length}
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
         self.telemetry.spills += 1
         self.telemetry.rows_spilled += len(self.buffer)
         self.telemetry.bytes_spilled += spill_path.stat().st_size
@@ -678,7 +769,14 @@ class SpillBuffer:
             for line in handle:
                 if not line.strip():
                     continue
-                self.writer.write(json.loads(line))
+                data = json.loads(line)
+                if isinstance(data, dict):
+                    values = data.get("values", [])
+                    observed_length = int(data.get("observed_length", len(values)))
+                else:
+                    values = list(data)
+                    observed_length = len(values)
+                self.writer.write(values, observed_length=observed_length)
         path.unlink(missing_ok=True)
 
 
@@ -728,6 +826,8 @@ class CheckpointStore:
 def iter_block_rows(block: FileBlock, encoding: str, errors: str) -> Iterable[Tuple[int, List[str]]]:
     delimiter = block.signature.delimiter or ","
     header_sample = (block.signature.header_sample or "").strip()
+    skip_header = bool(header_sample and (block.block_id == 0 or block.start_line == 0))
+    header_skipped = False
     with block.file_path.open("r", encoding=encoding, errors=errors) as handle:
         for line_number, line in enumerate(handle):
             if line_number < block.start_line:
@@ -735,7 +835,8 @@ def iter_block_rows(block: FileBlock, encoding: str, errors: str) -> Iterable[Tu
             if line_number > block.end_line:
                 break
             stripped = line.rstrip("\n\r")
-            if header_sample and line_number == block.start_line and stripped.strip() == header_sample:
+            if skip_header and not header_skipped and stripped.strip() == header_sample:
+                header_skipped = True
                 continue
             values = [value.strip() for value in stripped.split(delimiter)]
             yield line_number, values

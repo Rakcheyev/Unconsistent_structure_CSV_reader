@@ -17,6 +17,7 @@ class ColumnStats:
     maybe_numeric: bool = True
     maybe_date: bool = True
     maybe_bool: bool = True
+    type_counts: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -105,6 +106,31 @@ class SchemaMappingEntry:
 
 
 @dataclass(slots=True)
+class FileHeaderSummary:
+    """Raw header snapshot for a single file."""
+
+    file_id: str
+    headers: List[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class HeaderOccurrence:
+    """Single (file, column) header occurrence."""
+
+    raw_header: str
+    file_id: str
+    column_index: int
+
+
+@dataclass(slots=True)
+class HeaderTypeProfile:
+    """Aggregated type profile counts for a raw header."""
+
+    raw_header: str
+    type_profile: Dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class MappingConfig:
     """Serializable mapping between file blocks and schemas."""
 
@@ -112,6 +138,9 @@ class MappingConfig:
     schemas: List[SchemaDefinition] = field(default_factory=list)
     header_clusters: List[HeaderCluster] = field(default_factory=list)
     schema_mapping: List[SchemaMappingEntry] = field(default_factory=list)
+    file_headers: List[FileHeaderSummary] = field(default_factory=list)
+    header_occurrences: List[HeaderOccurrence] = field(default_factory=list)
+    header_profiles: List[HeaderTypeProfile] = field(default_factory=list)
 
     def to_dict(self, *, include_samples: bool = False) -> Dict[str, object]:
         """Return a JSON-ready dictionary without copying sample payloads unless requested."""
@@ -149,6 +178,7 @@ class FileAnalysisResult:
     file_path: Path
     total_lines: int
     blocks: List[FileBlock] = field(default_factory=list)
+    raw_headers: List[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

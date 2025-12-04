@@ -17,3 +17,7 @@
 6. **Configurable Parameters**
    - `block_size`, `min_gap_lines`, `max_parallel_files`, `confidence_thresholds`.
    - Значення зберігаються у Storage та підтягуються при старті job'ів.
+7. **Header Clusterizer (Phase 1.5)**
+   - Побудувати граф подібності на основі header metadata (occurrences, type profiles, sample values).
+   - Визначати `canonical_name`, `confidence_score`, `needs_review` і серіалізувати у `mapping.header_clusters`.
+   - Status: in progress (owner: core.headers.cluster_builder, CLI analyze).

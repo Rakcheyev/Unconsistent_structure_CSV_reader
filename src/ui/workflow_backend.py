@@ -1,15 +1,13 @@
 """Backend workflow for batch processing and convenience helpers."""
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import List, Sequence
 
 from common.config import load_runtime_config
-from common.models import (
-    FileAnalysisResult,
-    HeaderCluster,
-    HeaderVariant,
-    MappingConfig,
-)
+from common.models import FileAnalysisResult, HeaderCluster, MappingConfig
 from core.analysis import AnalysisEngine
+from core.headers.cluster_builder import HeaderClusterizer
+from core.headers.metadata import build_header_metadata
+from core.mapping.offset_detection import detect_offsets
 from core.materialization import MaterializationJobRunner
 from storage import save_mapping_config
 
@@ -21,50 +19,11 @@ def collect_csv_files(input_folder: str) -> List[Path]:
 
 
 def build_header_clusters(results: Sequence[FileAnalysisResult]) -> List[HeaderCluster]:
-    """Build simple per-file header clusters from analysis signatures.
+    """Convenience wrapper that runs the core HeaderClusterizer."""
 
-    This is intentionally lightweight; richer clustering happens in core.mapping.
-    """
-    header_groups: Dict[Tuple[Path, int, str], List[HeaderVariant]] = {}
-    for result in results:
-        for block in result.blocks:
-            signature = block.signature
-            if not signature.header_sample:
-                continue
-            delimiter = signature.delimiter or ","
-            raw_headers = signature.header_sample.rstrip("\n\r").split(delimiter)
-            row_count = max(0, block.end_line - block.start_line + 1)
-            for index, stats in signature.columns.items():
-                raw_name = raw_headers[index] if index < len(raw_headers) else ""
-                key = (block.file_path, index, raw_name)
-                detected_types: Dict[str, int] = {}
-                if stats.maybe_numeric:
-                    detected_types["numeric"] = stats.sample_count
-                if stats.maybe_bool:
-                    detected_types["bool"] = stats.sample_count
-                if stats.maybe_date:
-                    detected_types["date"] = stats.sample_count
-                variant = HeaderVariant(
-                    file_path=block.file_path,
-                    column_index=index,
-                    raw_name=raw_name,
-                    normalized_name=raw_name,
-                    detected_types=detected_types,
-                    sample_values=set(stats.sample_values),
-                    row_count=row_count,
-                )
-                header_groups.setdefault(key, []).append(variant)
-
-    header_clusters: List[HeaderCluster] = []
-    for (_file_path, idx, raw_name), variants in header_groups.items():
-        canonical = raw_name or f"column_{idx}"
-        header_clusters.append(
-            HeaderCluster(
-                canonical_name=canonical,
-                variants=variants,
-            )
-        )
-    return header_clusters
+    metadata = build_header_metadata(results)
+    clusterizer = HeaderClusterizer()
+    return clusterizer.build(results, metadata=metadata)
 
 def run_batch_workflow(input_folder: str, output_folder: str, output_format: str, memory_cap: int, chunk_size: int):
     files = collect_csv_files(input_folder or "input_data/")
@@ -95,7 +54,13 @@ def run_batch_workflow(input_folder: str, output_folder: str, output_format: str
 
     # Build and save mapping config with header clusters
     header_clusters = build_header_clusters(results)
-    mapping = MappingConfig(blocks=all_blocks, schemas=[], header_clusters=header_clusters)
+    schema_mapping = detect_offsets(header_clusters)
+    mapping = MappingConfig(
+        blocks=all_blocks,
+        schemas=[],
+        header_clusters=header_clusters,
+        schema_mapping=schema_mapping,
+    )
     mapping_path = Path(output_folder or "output_data/") / "mapping.json"
     save_mapping_config(mapping, mapping_path)
 

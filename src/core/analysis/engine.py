@@ -17,13 +17,13 @@ from common.models import (
     SchemaSignature,
 )
 from common.progress import ProgressLogger
+from core.headers.type_inference import classify_value
 from .block_planner import BlockPlanner
 from .line_counter import LineCounter
 
 ProgressCallback = Optional[Callable[[FileProgress], None]]
 
 MAX_SIGNATURE_SAMPLE_LINES = 100
-ENCODING_SENTINEL_PREFIX = "ENCODING:"  # stored in header_sample for downstream phases
 
 
 def detect_file_encoding(path: Path, default: str = "utf-8") -> str:
@@ -93,7 +93,7 @@ def build_signature(block_lines: List[str], sample_cap: int, *, encoding: str) -
     first_line = block_lines[0].rstrip("\n\r")
     delimiter = detect_delimiter(first_line)
     sample_lines = block_lines[:MAX_SIGNATURE_SAMPLE_LINES]
-    header_sample = f"{ENCODING_SENTINEL_PREFIX}{encoding}" if first_line else None
+    header_sample = first_line if first_line else None
 
     column_stats: Dict[int, ColumnStats] = {}
     col_count_counter: Counter[int] = Counter()
@@ -109,6 +109,8 @@ def build_signature(block_lines: List[str], sample_cap: int, *, encoding: str) -
             if cleaned and len(stats.sample_values) < sample_cap:
                 stats.sample_values.add(cleaned)
             update_type_flags(cleaned, stats)
+            category = classify_value(cleaned)
+            stats.type_counts[category] = stats.type_counts.get(category, 0) + 1
 
     column_count = col_count_counter.most_common(1)[0][0] if col_count_counter else 0
     return SchemaSignature(
@@ -170,7 +172,25 @@ def analyze_file(
             )
         )
 
-    return FileAnalysisResult(file_path=path, total_lines=total_lines, blocks=blocks)
+    raw_headers = _extract_file_headers(path, encoding=encoding, errors=errors)
+
+    return FileAnalysisResult(file_path=path, total_lines=total_lines, blocks=blocks, raw_headers=raw_headers)
+
+
+def _extract_file_headers(path: Path, *, encoding: str, errors: str) -> List[str]:
+    """Read the first non-empty header row from the file."""
+
+    try:
+        with path.open("r", encoding=encoding, errors=errors) as handle:
+            for line in handle:
+                stripped = line.rstrip("\n\r")
+                if not stripped:
+                    continue
+                delimiter = detect_delimiter(stripped)
+                return [cell.strip() for cell in stripped.split(delimiter)]
+    except OSError:
+        return []
+    return []
 
 
 def _worker_entry(args: Tuple[str, str, str, int, int, int]) -> FileAnalysisResult:

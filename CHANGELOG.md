@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.2.0] - 2025-12-01
+## [0.3.0] - 2025-12-04
+### Added
+- Phase 1 header telemetry (`header_occurrences`, `header_profiles`, `file_headers`) now recorded during `uscsv analyze`, persisted to JSON + SQLite, and exposed via new `HeaderMetadata` helpers.
+- Graph-driven `HeaderClusterizer` builds canonical names + confidence scores (with Cyrillic/Latin synonym awareness) and writes `mapping.header_clusters` for downstream review/materialization.
+- Offset detection now emits `schema_mapping` entries off the header clusters, and `RowNormalizer` consumes them to realign per-file columns during materialization.
+- Regression suites for clusterizer synonyms, schema mapping offsets, and RowNormalizer file-specific mappings.
+
+### Changed
+- Analyze/Batch workflows now include `schema_mapping` payloads by default and backfill them before materialization when missing.
+- Materialization runner keeps track of the original row width while reordering rows so short/long-row validation still reflects raw inputs despite canonical alignment.
+
 ### Added
 - Adaptive throttling + structured progress logging for the analysis engine alongside a CLI `benchmark` command for throughput tracking.
 - Optional SQLite persistence + audit logging toggled via `--sqlite-db` for analyze/review/normalize/materialize flows.

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "global": {
-    "encoding": "cp1251",
+    "encoding": "utf-8",
     "error_policy": "fail-fast",
     "synonym_dictionary": "storage/synonyms.json"
   },

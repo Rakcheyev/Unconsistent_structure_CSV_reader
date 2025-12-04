@@ -5,9 +5,17 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Sequence
 
-from common.models import FileProgress, JobMetrics, JobProgressEvent, MappingConfig
+from common.models import (
+    FileHeaderSummary,
+    FileProgress,
+    HeaderOccurrence,
+    HeaderTypeProfile,
+    JobMetrics,
+    JobProgressEvent,
+    MappingConfig,
+)
 
 
 SCHEMA_MIGRATIONS_TABLE = """
@@ -118,6 +126,33 @@ MIGRATIONS: List[tuple[int, List[str]]] = [
             """,
         ],
     ),
+    (
+        2,
+        [
+            """
+            CREATE TABLE IF NOT EXISTS header_occurrences (
+                raw_header TEXT NOT NULL,
+                file_id TEXT NOT NULL,
+                column_index INTEGER NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_header_occurrences_file ON header_occurrences(file_id)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS header_profiles (
+                raw_header TEXT PRIMARY KEY,
+                type_profile_json TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS file_headers (
+                file_id TEXT PRIMARY KEY,
+                headers_json TEXT NOT NULL
+            )
+            """,
+        ],
+    ),
 ]
 
 MAX_PROGRESS_EVENTS_PER_SCHEMA = 500
@@ -162,6 +197,83 @@ def persist_mapping(mapping: MappingConfig, db_path: Path) -> None:
                 ),
             )
         conn.commit()
+
+
+def persist_header_metadata(
+    db_path: Path,
+    file_headers: Sequence[FileHeaderSummary],
+    occurrences: Sequence[HeaderOccurrence],
+    profiles: Sequence[HeaderTypeProfile],
+) -> None:
+    initialize(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM file_headers")
+        conn.execute("DELETE FROM header_occurrences")
+        conn.execute("DELETE FROM header_profiles")
+        if file_headers:
+            conn.executemany(
+                "INSERT INTO file_headers(file_id, headers_json) VALUES (?, ?)",
+                ((item.file_id, json.dumps(item.headers, ensure_ascii=False)) for item in file_headers),
+            )
+        if occurrences:
+            conn.executemany(
+                "INSERT INTO header_occurrences(raw_header, file_id, column_index) VALUES (?, ?, ?)",
+                ((item.raw_header, item.file_id, item.column_index) for item in occurrences),
+            )
+        if profiles:
+            conn.executemany(
+                "INSERT INTO header_profiles(raw_header, type_profile_json) VALUES (?, ?)",
+                (
+                    (item.raw_header, json.dumps(item.type_profile, ensure_ascii=False))
+                    for item in profiles
+                ),
+            )
+        conn.commit()
+
+
+def fetch_file_headers(db_path: Path) -> List[FileHeaderSummary]:
+    initialize(db_path)
+    summaries: List[FileHeaderSummary] = []
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("SELECT file_id, headers_json FROM file_headers")
+        for file_id, headers_json in cursor.fetchall():
+            headers = json.loads(headers_json) if headers_json else []
+            summaries.append(FileHeaderSummary(file_id=file_id, headers=[str(h) for h in headers]))
+    return summaries
+
+
+def fetch_header_occurrences(db_path: Path) -> List[HeaderOccurrence]:
+    initialize(db_path)
+    items: List[HeaderOccurrence] = []
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute(
+            "SELECT raw_header, file_id, column_index FROM header_occurrences ORDER BY file_id, column_index"
+        )
+        for raw_header, file_id, column_index in cursor.fetchall():
+            items.append(
+                HeaderOccurrence(
+                    raw_header=str(raw_header or ""),
+                    file_id=str(file_id or ""),
+                    column_index=int(column_index),
+                )
+            )
+    return items
+
+
+def fetch_header_profiles(db_path: Path) -> List[HeaderTypeProfile]:
+    initialize(db_path)
+    profiles: List[HeaderTypeProfile] = []
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("SELECT raw_header, type_profile_json FROM header_profiles")
+        for raw_header, payload in cursor.fetchall():
+            data = json.loads(payload) if payload else {}
+            profiles.append(
+                HeaderTypeProfile(
+                    raw_header=str(raw_header or ""),
+                    type_profile={str(k): int(v) for k, v in data.items()},
+                )
+            )
+    return profiles
 
 
 def record_audit_event(db_path: Path, entity: str, action: str, detail: str | None = None) -> None:

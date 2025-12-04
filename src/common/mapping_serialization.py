@@ -8,7 +8,10 @@ from uuid import UUID
 from .models import (
     ColumnStats,
     FileBlock,
+    FileHeaderSummary,
     HeaderCluster,
+    HeaderOccurrence,
+    HeaderTypeProfile,
     HeaderVariant,
     MappingConfig,
     SchemaDefinition,
@@ -27,6 +30,12 @@ def mapping_to_dict(mapping: MappingConfig, *, include_samples: bool = False) ->
         payload["header_clusters"] = [serialize_header_cluster(cluster, include_samples) for cluster in mapping.header_clusters]
     if mapping.schema_mapping:
         payload["schema_mapping"] = [serialize_schema_mapping_entry(entry) for entry in mapping.schema_mapping]
+    if mapping.file_headers:
+        payload["file_headers"] = [serialize_file_header(summary) for summary in mapping.file_headers]
+    if mapping.header_occurrences:
+        payload["header_occurrences"] = [serialize_header_occurrence(item) for item in mapping.header_occurrences]
+    if mapping.header_profiles:
+        payload["header_profiles"] = [serialize_header_profile(item) for item in mapping.header_profiles]
     return payload
 
 
@@ -37,13 +46,67 @@ def mapping_from_dict(data: Dict[str, object]) -> MappingConfig:
     schemas = [deserialize_schema(item) for item in schemas_data]
     header_clusters_data = data.get("header_clusters", [])
     schema_mapping_data = data.get("schema_mapping", [])
+    file_headers_data = data.get("file_headers", [])
+    header_occurrences_data = data.get("header_occurrences", [])
+    header_profiles_data = data.get("header_profiles", [])
     header_clusters = [deserialize_header_cluster(item) for item in header_clusters_data]
     schema_mapping = [deserialize_schema_mapping_entry(item) for item in schema_mapping_data]
+    file_headers = [deserialize_file_header(item) for item in file_headers_data]
+    header_occurrences = [deserialize_header_occurrence(item) for item in header_occurrences_data]
+    header_profiles = [deserialize_header_profile(item) for item in header_profiles_data]
     return MappingConfig(
         blocks=blocks,
         schemas=schemas,
         header_clusters=header_clusters,
         schema_mapping=schema_mapping,
+        file_headers=file_headers,
+        header_occurrences=header_occurrences,
+        header_profiles=header_profiles,
+    )
+
+
+def serialize_file_header(summary: FileHeaderSummary) -> Dict[str, object]:
+    return {
+        "file_id": summary.file_id,
+        "headers": summary.headers,
+    }
+
+
+def deserialize_file_header(data: Dict[str, object]) -> FileHeaderSummary:
+    return FileHeaderSummary(
+        file_id=str(data.get("file_id", "")),
+        headers=[str(item) for item in data.get("headers", [])],
+    )
+
+
+def serialize_header_occurrence(item: HeaderOccurrence) -> Dict[str, object]:
+    return {
+        "raw_header": item.raw_header,
+        "file_id": item.file_id,
+        "column_index": item.column_index,
+    }
+
+
+def deserialize_header_occurrence(data: Dict[str, object]) -> HeaderOccurrence:
+    return HeaderOccurrence(
+        raw_header=str(data.get("raw_header", "")),
+        file_id=str(data.get("file_id", "")),
+        column_index=int(data.get("column_index", 0)),
+    )
+
+
+def serialize_header_profile(item: HeaderTypeProfile) -> Dict[str, object]:
+    return {
+        "raw_header": item.raw_header,
+        "type_profile": dict(item.type_profile),
+    }
+
+
+def deserialize_header_profile(data: Dict[str, object]) -> HeaderTypeProfile:
+    profile_data = {str(k): int(v) for k, v in data.get("type_profile", {}).items()}
+    return HeaderTypeProfile(
+        raw_header=str(data.get("raw_header", "")),
+        type_profile=profile_data,
     )
 
 
@@ -178,6 +241,7 @@ def serialize_column_stats(stats: ColumnStats, include_samples: bool) -> Dict[st
         "maybe_numeric": stats.maybe_numeric,
         "maybe_date": stats.maybe_date,
         "maybe_bool": stats.maybe_bool,
+        "type_counts": dict(stats.type_counts),
     }
     if include_samples:
         payload["sample_values"] = sorted(stats.sample_values)
@@ -190,6 +254,7 @@ def deserialize_column_stats(data: Dict[str, object], *, index: int = 0) -> Colu
     stats.maybe_numeric = bool(data.get("maybe_numeric", True))
     stats.maybe_date = bool(data.get("maybe_date", True))
     stats.maybe_bool = bool(data.get("maybe_bool", True))
+    stats.type_counts = {str(k): int(v) for k, v in data.get("type_counts", {}).items()}
     samples = data.get("sample_values", [])
     if samples:
         stats.sample_values.update(str(item) for item in samples)

@@ -11,14 +11,17 @@ from common.config import load_runtime_config
 from common.models import FileAnalysisResult, FileProgress, MappingConfig, RuntimeConfig
 from common.progress import BenchmarkRecorder
 from core.analysis import AnalysisEngine
+from core.headers.cluster_builder import HeaderClusterizer
+from core.headers.metadata import HeaderMetadata, build_header_metadata
+from core.mapping.offset_detection import detect_offsets
 from core.mapping import MappingService
 from core.materialization import MaterializationPlanner, MaterializationJobRunner
 from core.normalization import NormalizationService, SynonymDictionary
-from ui.workflow_backend import build_header_clusters
 from storage import (
     init_sqlite,
     load_mapping_config,
     persist_mapping_sqlite,
+    persist_header_metadata,
     record_audit_event,
     record_job_metrics,
     record_progress_event,
@@ -94,11 +97,23 @@ def command_analyze(args: argparse.Namespace) -> None:
     for result in results:
         all_blocks.extend(result.blocks)
 
-    header_clusters = build_header_clusters(results)
-    mapping = MappingConfig(blocks=all_blocks, schemas=[], header_clusters=header_clusters)
+    metadata = build_header_metadata(results)
+    clusterizer = HeaderClusterizer()
+    header_clusters = clusterizer.build(results, metadata=metadata)
+    schema_mapping = detect_offsets(header_clusters)
+    mapping = MappingConfig(
+        blocks=all_blocks,
+        schemas=[],
+        header_clusters=header_clusters,
+        schema_mapping=schema_mapping,
+        file_headers=metadata.file_headers,
+        header_occurrences=metadata.occurrences,
+        header_profiles=metadata.profiles,
+    )
     output_path = Path(args.output)
     save_mapping_config(mapping, output_path, include_samples=args.include_samples)
     maybe_persist_sqlite(mapping, args.sqlite_db, "analyze")
+    maybe_persist_header_metadata(metadata, args.sqlite_db)
 
     print(f"Wrote mapping with {len(all_blocks)} blocks to {output_path}")
 
@@ -199,7 +214,6 @@ def command_review(args: argparse.Namespace) -> None:
             print(f"[header-detect] Error reading {file_path}: {e}")
 
     # Offset detection integration
-    from core.mapping.offset_detection import detect_offsets
     updated.schema_mapping = detect_offsets(updated.header_clusters)
 
     output_path = Path(args.output)
@@ -230,6 +244,10 @@ def command_materialize(args: argparse.Namespace) -> None:
     runtime = load_runtime_config(profile=args.profile)
     mapping = load_mapping_config(Path(args.mapping))
     print(f"[materialize] Loaded mapping: {args.mapping} blocks={len(mapping.blocks)} schemas={len(mapping.schemas)}")
+
+    if not mapping.schema_mapping and mapping.header_clusters:
+        mapping.schema_mapping = detect_offsets(mapping.header_clusters)
+        print("[materialize] Generated schema_mapping entries from header clusters")
 
     if args.writer_format == "database" and not args.db_url:
         raise SystemExit("--db-url is required when --writer-format=database")
@@ -491,6 +509,13 @@ def maybe_record_job_metrics(sqlite_arg: str | None, summary) -> None:
     if not sqlite_arg:
         return
     record_job_metrics(Path(sqlite_arg), summary.to_job_metrics())
+
+
+def maybe_persist_header_metadata(metadata: HeaderMetadata, sqlite_arg: str | None) -> None:
+    if not sqlite_arg:
+        return
+    db_path = Path(sqlite_arg)
+    persist_header_metadata(db_path, metadata.file_headers, metadata.occurrences, metadata.profiles)
 
 
 def maybe_initialize_sqlite(sqlite_arg: str | None) -> None:

@@ -7,7 +7,8 @@
    - Прохід файла блоками, побудова `FileBlock` + `SchemaSignature`.
    - Запуск у `ProcessPoolExecutor`, UI лише слухає прогрес і логі.
 3. **Review & Edit Schemas (Phase 1.5)**
-   - Карточки схем, merge/compare, нормалізація назв колонок, confidence-пороги.
+   - Новий `HeaderClusterizer` запускається одразу після аналізу: будує граф подібності між усіма зафіксованими заголовками, розраховує `canonical_name`, `confidence_score`, `needs_review` і зберігає результат в `mapping.header_clusters` + SQLite.
+   - Карточки схем, merge/compare, нормалізація назв колонок, confidence-пороги ґрунтуються на цих кластерах та type profile'ах.
 4. **Normalize Values & Types**
    - Column profiler, виявлення аномалій, синоніми й очищення значень.
 5. **Materialize Datasets (Phase 2)**
