@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, TextIO, Tuple
 from uuid import uuid4
@@ -491,8 +491,8 @@ class MaterializationJobRunner:
             "rows_written": summary.rows_written,
             "duration_seconds": summary.duration_seconds,
             "rows_per_second": summary.rows_per_second,
-            "validation": summary.validation.__dict__,
-            "spill": summary.spill_metrics.__dict__,
+            "validation": asdict(summary.validation),
+            "spill": asdict(summary.spill_metrics),
             "timestamp": time.time(),
         }
         self.telemetry_log.parent.mkdir(parents=True, exist_ok=True)
@@ -804,7 +804,14 @@ class CSVSchemaWriter(BaseSchemaWriter):
     def _after_open(self, append: bool) -> None:
         assert self._handle is not None
         self._csv_writer = csv.writer(self._handle)
-        if not append:
+        # Resume runs may reopen an empty file in append mode if output dirs were cleaned.
+        needs_header = not append
+        if append:
+            try:
+                needs_header = self._handle.tell() == 0
+            except (OSError, ValueError):
+                needs_header = True
+        if needs_header:
             self._csv_writer.writerow(self.header)
 
     def _write_row(self, values: Sequence[str]) -> None:

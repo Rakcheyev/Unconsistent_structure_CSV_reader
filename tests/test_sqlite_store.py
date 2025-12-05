@@ -4,7 +4,17 @@ import json
 import sqlite3
 from pathlib import Path
 
-from common.models import ColumnProfileResult, FileProgress, JobMetrics, SpillMetrics, ValidationSummary
+from common.models import (
+    ColumnProfileResult,
+    FileProgress,
+    JobMetrics,
+    MappingConfig,
+    SchemaColumn,
+    SchemaDefinition,
+    SpillMetrics,
+    ValidationSummary,
+)
+from common.versioning import HEADER_CLUSTER_VERSION, MAPPING_ARTIFACT_VERSION
 from storage import (
     fetch_column_profiles,
     fetch_job_progress_events,
@@ -14,6 +24,7 @@ from storage import (
 from storage.sqlite_store import (
     MIGRATIONS,
     initialize,
+    persist_mapping,
     record_job_metrics,
     record_progress_event,
 )
@@ -186,8 +197,19 @@ def test_initialize_applies_all_migrations(tmp_path: Path) -> None:
             "job_metrics",
             "job_progress_events",
             "schema_migrations",
+            "artifact_metadata",
         }
         assert expected_tables.issubset(tables)
+
+        schema_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info('schemas')")
+        }
+        assert {
+            "canonical_schema_id",
+            "canonical_namespace",
+            "canonical_schema_version",
+        }.issubset(schema_columns)
 
         latest_version = MIGRATIONS[-1][0]
         applied_versions = {
@@ -195,3 +217,26 @@ def test_initialize_applies_all_migrations(tmp_path: Path) -> None:
             for row in conn.execute("SELECT version FROM schema_migrations")
         }
         assert latest_version in applied_versions
+
+
+def test_persist_mapping_writes_version_metadata(tmp_path: Path) -> None:
+    db_path = tmp_path / "mapping.db"
+    schema = SchemaDefinition(name="orders", columns=[SchemaColumn(index=0, raw_name="id")])
+    schema.canonical_schema_id = "orders_v1"
+    schema.canonical_namespace = "retail"
+    schema.canonical_schema_version = "1.2.3"
+    mapping = MappingConfig(schemas=[schema])
+    persist_mapping(mapping, db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT canonical_schema_id, canonical_namespace, canonical_schema_version FROM schemas"
+        ).fetchone()
+        metadata = {
+            key: value
+            for key, value in conn.execute("SELECT key, value FROM artifact_metadata")
+        }
+
+    assert row == ("orders_v1", "retail", "1.2.3")
+    assert metadata["mapping.artifact_version"] == MAPPING_ARTIFACT_VERSION
+    assert metadata["header_clusters.version"] == HEADER_CLUSTER_VERSION

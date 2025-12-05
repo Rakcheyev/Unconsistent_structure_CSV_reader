@@ -19,6 +19,9 @@
    - Column profiler flags (наприклад, 0% uniqueness + 80% nulls) відображаються на карточці й блокують авто-merge до ручного підтвердження.
 4. **Audit Hooks**
    - Кожне підтвердження/merge записується в SQLite `audit_log` з полями entity/action/detail/time.
+5. **Version Metadata**
+   - Header cluster артефакти (`mapping.header_clusters.json`) тепер несуть `artifact_version` + `version` на кожному кластері; ті ж значення кешуються у SQLite `artifact_metadata`.
+   - R/O перегляди мають показувати namespace + `canonical_schema_version`, що тепер зберігається у таблиці `schemas`, щоб PM/UX бачила, до якого контракту прив'язана карта.
 
 ## Artifacts Location
 - Wireframes: `docs/ui_assets/` (PNG або PDF).

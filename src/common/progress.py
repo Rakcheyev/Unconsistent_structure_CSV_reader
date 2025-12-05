@@ -22,6 +22,7 @@ class ProgressLogger:
         if not self.path:
             return
         payload = asdict(progress)
+        payload["file_path"] = str(progress.file_path)
         payload["timestamp"] = time.time()
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload))

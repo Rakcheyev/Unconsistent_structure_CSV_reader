@@ -1,0 +1,306 @@
+{
+  "generated_at": "2025-12-05T01:18:38Z",
+  "profiles": [
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 0,
+      "header": "ZMS ID",
+      "type_distribution": {
+        "integer": 56999,
+        "float": 0,
+        "text": 0,
+        "date": 0,
+        "null": 0
+      },
+      "unique_estimate": 59644,
+      "null_count": 0,
+      "total_values": 56999,
+      "numeric_min": 6356033.0,
+      "numeric_max": 1689588268.0
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 1,
+      "header": "foxtrot.com.ua ID",
+      "type_distribution": {
+        "integer": 23831,
+        "float": 0,
+        "text": 0,
+        "date": 0,
+        "null": 33168
+      },
+      "unique_estimate": 22273,
+      "null_count": 33168,
+      "total_values": 56999,
+      "numeric_min": 11883.0,
+      "numeric_max": 7195749.0
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 2,
+      "header": "foxtrot.com.ua \u0431\u0440\u0435\u043d\u0434",
+      "type_distribution": {
+        "integer": 0,
+        "float": 0,
+        "text": 23804,
+        "date": 0,
+        "null": 33195
+      },
+      "unique_estimate": 932,
+      "null_count": 33195,
+      "total_values": 56999
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 3,
+      "header": "foxtrot.com.ua \u043c\u043e\u0434\u0435\u043b\u044c",
+      "type_distribution": {
+        "integer": 0,
+        "float": 0,
+        "text": 23414,
+        "date": 417,
+        "null": 33168
+      },
+      "unique_estimate": 22686,
+      "null_count": 33168,
+      "total_values": 56999
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 4,
+      "header": "foxtrot.com.ua \u0446\u0435\u043d\u0430",
+      "type_distribution": {
+        "integer": 23814,
+        "float": 1,
+        "text": 0,
+        "date": 0,
+        "null": 33184
+      },
+      "unique_estimate": 4951,
+      "null_count": 33184,
+      "total_values": 56999,
+      "numeric_min": 8.0,
+      "numeric_max": 367139.0
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 5,
+      "header": "ID",
+      "type_distribution": {
+        "integer": 42780,
+        "float": 14219,
+        "text": 0,
+        "date": 0,
+        "null": 0
+      },
+      "unique_estimate": 53031,
+      "null_count": 0,
+      "total_values": 56999,
+      "numeric_min": 0.1004875,
+      "numeric_max": 12354631.0
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 6,
+      "header": "\u041a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u044f",
+      "type_distribution": {
+        "integer": 0,
+        "float": 0,
+        "text": 56999,
+        "date": 0,
+        "null": 0
+      },
+      "unique_estimate": 5283,
+      "null_count": 0,
+      "total_values": 56999
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 7,
+      "header": "\u0411\u0440\u0435\u043d\u0434",
+      "type_distribution": {
+        "integer": 0,
+        "float": 0,
+        "text": 56965,
+        "date": 0,
+        "null": 34
+      },
+      "unique_estimate": 1399,
+      "null_count": 34,
+      "total_values": 56999
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 8,
+      "header": "\u041c\u043e\u0434\u0435\u043b\u044c",
+      "type_distribution": {
+        "integer": 0,
+        "float": 0,
+        "text": 56167,
+        "date": 832,
+        "null": 0
+      },
+      "unique_estimate": 52875,
+      "null_count": 0,
+      "total_values": 56999
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 9,
+      "header": "\u041a\u043e\u0434 \u043f\u0440\u043e\u0438\u0437\u0432\u043e\u0434\u0438\u0442\u0435\u043b\u044f",
+      "type_distribution": {
+        "integer": 0,
+        "float": 0,
+        "text": 0,
+        "date": 0,
+        "null": 56999
+      },
+      "unique_estimate": 0,
+      "null_count": 56999,
+      "total_values": 56999
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 10,
+      "header": "\u0426\u0435\u043d\u0430",
+      "type_distribution": {
+        "integer": 56999,
+        "float": 0,
+        "text": 0,
+        "date": 0,
+        "null": 0
+      },
+      "unique_estimate": 7486,
+      "null_count": 0,
+      "total_values": 56999,
+      "numeric_min": 8.0,
+      "numeric_max": 420910.0
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 11,
+      "header": "\u0421\u0442\u0430\u0442\u0443\u0441",
+      "type_distribution": {
+        "integer": 56999,
+        "float": 0,
+        "text": 0,
+        "date": 0,
+        "null": 0
+      },
+      "unique_estimate": 1,
+      "null_count": 0,
+      "total_values": 56999,
+      "numeric_min": 1.0,
+      "numeric_max": 1.0
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 12,
+      "header": "\u0421\u0441\u044b\u043b\u043a\u0430",
+      "type_distribution": {
+        "integer": 0,
+        "float": 0,
+        "text": 55320,
+        "date": 1679,
+        "null": 0
+      },
+      "unique_estimate": 54119,
+      "null_count": 0,
+      "total_values": 56999
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 13,
+      "header": "\u0421\u0442\u0430\u0440\u0430\u044f \u0446\u0435\u043d\u0430",
+      "type_distribution": {
+        "integer": 14559,
+        "float": 0,
+        "text": 0,
+        "date": 0,
+        "null": 42440
+      },
+      "unique_estimate": 3882,
+      "null_count": 42440,
+      "total_values": 56999,
+      "numeric_min": 14.0,
+      "numeric_max": 229999.0
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 14,
+      "header": "\u0414\u0430\u0442\u0430",
+      "type_distribution": {
+        "integer": 0,
+        "float": 0,
+        "text": 0,
+        "date": 56999,
+        "null": 0
+      },
+      "unique_estimate": 505,
+      "null_count": 0,
+      "total_values": 56999
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 15,
+      "header": "\u0414\u043e\u043f. \u0446\u0435\u043d\u0430 1",
+      "type_distribution": {
+        "integer": 0,
+        "float": 0,
+        "text": 0,
+        "date": 0,
+        "null": 56999
+      },
+      "unique_estimate": 0,
+      "null_count": 56999,
+      "total_values": 56999
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 16,
+      "header": "\u0410\u0434\u0440\u0435\u0441",
+      "type_distribution": {
+        "integer": 0,
+        "float": 0,
+        "text": 56999,
+        "date": 0,
+        "null": 0
+      },
+      "unique_estimate": 1,
+      "null_count": 0,
+      "total_values": 56999
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 17,
+      "header": "\u0410\u0434\u0440\u0435\u0441. \u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435",
+      "type_distribution": {
+        "integer": 0,
+        "float": 0,
+        "text": 56999,
+        "date": 0,
+        "null": 0
+      },
+      "unique_estimate": 1,
+      "null_count": 0,
+      "total_values": 56999
+    },
+    {
+      "file_id": "D:/Git/Unconsistent_structure_CSV_reader/input_data/comfy.ua-products-fastov-2025-11-11-11-38.csv",
+      "column_index": 18,
+      "header": "\u0410\u0434\u0440\u0435\u0441. \u041a\u043e\u043b-\u0432\u043e",
+      "type_distribution": {
+        "integer": 56999,
+        "float": 0,
+        "text": 0,
+        "date": 0,
+        "null": 0
+      },
+      "unique_estimate": 19,
+      "null_count": 0,
+      "total_values": 56999,
+      "numeric_min": 0.0,
+      "numeric_max": 66.0
+    }
+  ]
+}

@@ -49,6 +49,7 @@ class NormalizationService:
             return
         schema.canonical_schema_id = canonical.schema_id
         schema.canonical_namespace = canonical.namespace
+        schema.canonical_schema_version = canonical.version
         column_by_slug = {
             slugify(column.normalized_name or column.raw_name or f"column_{column.index + 1}"): column
             for column in schema.columns

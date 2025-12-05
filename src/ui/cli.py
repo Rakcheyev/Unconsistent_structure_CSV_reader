@@ -11,6 +11,8 @@ from typing import Callable, Iterable, List, Sequence
 from uuid import uuid4
 
 from common.config import load_runtime_config
+from common.errors import BackendError
+from common.sandbox import Sandbox
 from common.mapping_serialization import (
     serialize_column_profile_result,
     serialize_header_cluster,
@@ -131,13 +133,14 @@ def command_analyze(args: argparse.Namespace) -> None:
         header_profiles=metadata.profiles,
         column_profiles=all_column_profiles,
     )
-    output_path = Path(args.output)
+    sandbox = Sandbox(Path.cwd(), allowlist=_collect_allowlist_paths(args))
+    output_path = sandbox.resolve(args.output)
     save_mapping_config(mapping, output_path, include_samples=args.include_samples)
     write_header_cluster_artifact(header_clusters, output_path)
     write_column_profile_artifact(all_column_profiles, output_path)
-    maybe_persist_sqlite(mapping, args.sqlite_db, "analyze")
-    maybe_persist_header_metadata(metadata, args.sqlite_db)
-    maybe_persist_column_profiles(all_column_profiles, args.sqlite_db)
+    maybe_persist_sqlite(mapping, sandbox, args.sqlite_db, "analyze")
+    maybe_persist_header_metadata(metadata, sandbox, args.sqlite_db)
+    maybe_persist_column_profiles(all_column_profiles, sandbox, args.sqlite_db)
 
     print(f"Wrote mapping with {len(all_blocks)} blocks to {output_path}")
 
@@ -177,7 +180,8 @@ def command_benchmark(args: argparse.Namespace) -> None:
 
 def command_review(args: argparse.Namespace) -> None:
     runtime = load_runtime_config(profile=args.profile)
-    mapping = load_mapping_config(Path(args.mapping))
+    sandbox = Sandbox(Path.cwd(), allowlist=_collect_allowlist_paths(args))
+    mapping = load_mapping_config(sandbox.resolve(args.mapping, must_exist=True))
 
     # Auto-generate synonym dictionary from all headers in blocks, grouping by canonical slug
     import re
@@ -243,10 +247,10 @@ def command_review(args: argparse.Namespace) -> None:
         column_profiles=updated.column_profiles,
     )
 
-    output_path = Path(args.output)
+    output_path = sandbox.resolve(args.output)
     save_mapping_config(updated, output_path, include_samples=args.include_samples)
     print(f"[review] mapping saved to: {output_path} (exists: {output_path.exists()})")
-    maybe_persist_sqlite(updated, args.sqlite_db, "review")
+    maybe_persist_sqlite(updated, sandbox, args.sqlite_db, "review")
 
     print(
         f"Clustered {len(updated.blocks)} blocks into {len(updated.schemas)} schema(s). Output: {output_path}"
@@ -255,23 +259,25 @@ def command_review(args: argparse.Namespace) -> None:
 
 def command_normalize(args: argparse.Namespace) -> None:
     runtime = load_runtime_config(profile=args.profile)
-    mapping = load_mapping_config(Path(args.mapping))
+    sandbox = Sandbox(Path.cwd(), allowlist=_collect_allowlist_paths(args))
+    mapping = load_mapping_config(sandbox.resolve(args.mapping, must_exist=True))
     synonyms = load_synonyms(args.synonyms, runtime)
     canonical_registry = load_canonical_registry(Path(runtime.global_settings.canonical_schema_path))
 
     service = NormalizationService(synonyms, canonical_registry=canonical_registry)
     service.apply(mapping)
 
-    output_path = Path(args.output)
+    output_path = sandbox.resolve(args.output)
     save_mapping_config(mapping, output_path, include_samples=args.include_samples)
-    maybe_persist_sqlite(mapping, args.sqlite_db, "normalize")
+    maybe_persist_sqlite(mapping, sandbox, args.sqlite_db, "normalize")
     print(f"Applied synonym dictionary to {len(mapping.schemas)} schema(s). Output: {output_path}")
 
 
 def command_materialize(args: argparse.Namespace) -> None:
     runtime = load_runtime_config(profile=args.profile)
+    sandbox = Sandbox(Path.cwd(), allowlist=_collect_allowlist_paths(args))
     resource_manager = ResourceManager(runtime.profile.resource_limits)
-    mapping = load_mapping_config(Path(args.mapping))
+    mapping = load_mapping_config(sandbox.resolve(args.mapping, must_exist=True))
     canonical_registry = load_canonical_registry(Path(runtime.global_settings.canonical_schema_path))
     print(f"[materialize] Loaded mapping: {args.mapping} blocks={len(mapping.blocks)} schemas={len(mapping.schemas)}")
 
@@ -285,15 +291,15 @@ def command_materialize(args: argparse.Namespace) -> None:
     if args.writer_format == "database" and not args.db_url:
         raise SystemExit("--db-url is required when --writer-format=database")
 
-    checkpoint_dir = Path(args.checkpoint_dir)
+    checkpoint_dir = sandbox.resolve(args.checkpoint_dir)
     if checkpoint_dir.suffix.lower() == ".json":
         print(
             f"[materialize] Legacy --checkpoint path '{checkpoint_dir}' detected; using its parent directory for checkpoint registry."
         )
         checkpoint_dir = checkpoint_dir.parent or Path(".")
     checkpoint_registry = CheckpointRegistry(checkpoint_dir)
-    dest_dir = Path(args.dest)
-    sqlite_path: Path | None = Path(args.sqlite_db) if args.sqlite_db else None
+    dest_dir = sandbox.resolve(args.dest)
+    sqlite_path: Path | None = sandbox.resolve(args.sqlite_db) if args.sqlite_db else None
     resume_job_id = args.resume
     if resume_job_id and args.job_id and resume_job_id != args.job_id:
         raise SystemExit("--resume JOB_ID must match --job-id when both are provided")
@@ -318,7 +324,7 @@ def command_materialize(args: argparse.Namespace) -> None:
                 f.unlink()
             except Exception as e:
                 print(f"[materialize] Failed to delete {f}: {e}")
-    telemetry_log = Path(args.telemetry_log) if args.telemetry_log else None
+    telemetry_log = sandbox.resolve(args.telemetry_log) if args.telemetry_log else None
     progress_callbacks: List[Callable[[FileProgress], None]] = [render_materialization_progress]
     progress_db_path: Path | None = sqlite_path
     if progress_db_path:
@@ -331,27 +337,8 @@ def command_materialize(args: argparse.Namespace) -> None:
             callback(progress)
 
     print(f"[materialize] Using encoding: {runtime.global_settings.encoding}")
-    runner = MaterializationJobRunner(
-        runtime,
-        checkpoint_registry=checkpoint_registry,
-        job_id=job_id,
-        writer_format=args.writer_format,
-        spill_threshold=args.spill_threshold,
-        telemetry_log=telemetry_log,
-        db_url=args.db_url,
-        canonical_registry=canonical_registry,
-        job_tracker=job_tracker,
-        resource_manager=resource_manager,
-    )
-    completed = False
-    try:
-        summaries = runner.run(mapping, dest_dir, progress_callback=combined_progress)
-        completed = True
-    except UnicodeDecodeError:
-        print("UnicodeDecodeError: retrying materialization with cp1251 encoding...")
-        runtime.global_settings.encoding = "cp1251"
-        print(f"[materialize] Fallback encoding: cp1251")
-        runner = MaterializationJobRunner(
+    def build_runner(bound_job_tracker: JobStateMachine) -> MaterializationJobRunner:
+        return MaterializationJobRunner(
             runtime,
             checkpoint_registry=checkpoint_registry,
             job_id=job_id,
@@ -360,9 +347,25 @@ def command_materialize(args: argparse.Namespace) -> None:
             telemetry_log=telemetry_log,
             db_url=args.db_url,
             canonical_registry=canonical_registry,
-            job_tracker=job_tracker,
+            job_tracker=bound_job_tracker,
             resource_manager=resource_manager,
         )
+
+    runner = build_runner(job_tracker)
+    completed = False
+    try:
+        summaries = runner.run(mapping, dest_dir, progress_callback=combined_progress)
+        completed = True
+    except UnicodeDecodeError:
+        print("UnicodeDecodeError: retrying materialization with cp1251 encoding...")
+        runtime.global_settings.encoding = "cp1251"
+        print(f"[materialize] Fallback encoding: cp1251")
+        job_tracker = JobStateMachine(
+            job_id,
+            sqlite_path,
+            metadata={"command": "materialize", "retry": "encoding-fallback"},
+        )
+        runner = build_runner(job_tracker)
         summaries = runner.run(mapping, dest_dir, progress_callback=combined_progress)
         completed = True
 
@@ -378,13 +381,13 @@ def command_materialize(args: argparse.Namespace) -> None:
             f" long_rows={validation.long_rows} spills={spill.spills}"
             f" output_files={summary.output_files}"
         )
-        maybe_record_job_metrics(args.sqlite_db, summary)
+        maybe_record_job_metrics(sandbox, args.sqlite_db, summary)
 
-    plan_path = Path(args.plan)
+    plan_path = sandbox.resolve(args.plan)
     planner = MaterializationPlanner(runtime.profile.writer_chunk_rows)
     plan = planner.build_plan(mapping, dest_dir)
     planner.write_plan(plan, plan_path)
-    maybe_record_audit(args.sqlite_db, "materialize", f"schemas={len(summaries)}, rows={total_rows}")
+    maybe_record_audit(sandbox, args.sqlite_db, "materialize", f"schemas={len(summaries)}, rows={total_rows}")
     print(
         f"Materialized {len(summaries)} schema job(s) → {dest_dir}. Rows written: {total_rows}. "
         f"Plan saved to {plan_path}."
@@ -571,10 +574,15 @@ def load_synonyms(arg_path: str | None, runtime_config: RuntimeConfig) -> Synony
     return SynonymDictionary.from_file(path)
 
 
-def maybe_persist_sqlite(mapping: MappingConfig, sqlite_arg: str | None, action: str) -> None:
+def maybe_persist_sqlite(
+    mapping: MappingConfig,
+    sandbox: Sandbox,
+    sqlite_arg: str | None,
+    action: str,
+) -> None:
     if not sqlite_arg:
         return
-    db_path = Path(sqlite_arg)
+    db_path = sandbox.resolve(sqlite_arg)
     persist_mapping_sqlite(mapping, db_path)
     record_audit_event(
         db_path,
@@ -584,31 +592,47 @@ def maybe_persist_sqlite(mapping: MappingConfig, sqlite_arg: str | None, action:
     )
 
 
-def maybe_record_audit(sqlite_arg: str | None, action: str, detail: str) -> None:
+def maybe_record_audit(
+    sandbox: Sandbox,
+    sqlite_arg: str | None,
+    action: str,
+    detail: str,
+) -> None:
     if not sqlite_arg:
         return
-    record_audit_event(Path(sqlite_arg), entity="materialization", action=action, detail=detail)
+    record_audit_event(
+        sandbox.resolve(sqlite_arg),
+        entity="materialization",
+        action=action,
+        detail=detail,
+    )
 
 
-def maybe_record_job_metrics(sqlite_arg: str | None, summary) -> None:
+def maybe_record_job_metrics(sandbox: Sandbox, sqlite_arg: str | None, summary) -> None:
     if not sqlite_arg:
         return
-    record_job_metrics(Path(sqlite_arg), summary.to_job_metrics())
+    record_job_metrics(sandbox.resolve(sqlite_arg), summary.to_job_metrics())
 
 
-def maybe_persist_header_metadata(metadata: HeaderMetadata, sqlite_arg: str | None) -> None:
+def maybe_persist_header_metadata(
+    metadata: HeaderMetadata,
+    sandbox: Sandbox,
+    sqlite_arg: str | None,
+) -> None:
     if not sqlite_arg:
         return
-    db_path = Path(sqlite_arg)
+    db_path = sandbox.resolve(sqlite_arg)
     persist_header_metadata(db_path, metadata.file_headers, metadata.occurrences, metadata.profiles)
 
 
 def maybe_persist_column_profiles(
-    profiles: Sequence[ColumnProfileResult], sqlite_arg: str | None
+    profiles: Sequence[ColumnProfileResult],
+    sandbox: Sandbox,
+    sqlite_arg: str | None,
 ) -> None:
     if not sqlite_arg or not profiles:
         return
-    db_path = Path(sqlite_arg)
+    db_path = sandbox.resolve(sqlite_arg)
     persist_column_profiles(db_path, profiles)
 
 
@@ -639,10 +663,46 @@ def write_column_profile_artifact(
     artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def maybe_initialize_sqlite(sqlite_arg: str | None) -> None:
+def _collect_allowlist_paths(args: argparse.Namespace) -> tuple[Path, ...]:
+    candidates: list[Path] = []
+    field_names = (
+        "output",
+        "progress_log",
+        "sqlite_db",
+        "mapping",
+        "synonyms",
+        "dest",
+        "plan",
+        "checkpoint_dir",
+        "telemetry_log",
+        "log",
+    )
+    for name in field_names:
+        if not hasattr(args, name):
+            continue
+        value = getattr(args, name)
+        _maybe_collect_path_value(value, candidates)
+    return tuple(candidates)
+
+
+def _maybe_collect_path_value(value: object, accumulator: list[Path]) -> None:
+    if value is None:
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _maybe_collect_path_value(item, accumulator)
+        return
+    if not isinstance(value, str):
+        return
+    path = Path(value)
+    if path.is_absolute():
+        accumulator.append(path)
+
+
+def maybe_initialize_sqlite(sandbox: Sandbox, sqlite_arg: str | None) -> None:
     if not sqlite_arg:
         return
-    init_sqlite(Path(sqlite_arg))
+    init_sqlite(sandbox.resolve(sqlite_arg))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -651,15 +711,20 @@ def main(argv: list[str] | None = None) -> None:
     if not hasattr(args, "func"):
         parser.print_help()
         return
-    maybe_initialize_sqlite(getattr(args, "sqlite_db", None))
+    sandbox = Sandbox(Path.cwd(), allowlist=_collect_allowlist_paths(args))
+    maybe_initialize_sqlite(sandbox, getattr(args, "sqlite_db", None))
 
     # --- Enforce workflow: analyze must run before review ---
     if args.command == "review":
-        mapping_path = Path(args.mapping)
+        mapping_path = sandbox.resolve(args.mapping)
         if not mapping_path.exists():
             print(f"[workflow] mapping file '{mapping_path}' not found. Run 'analyze' first.")
             return
-    args.func(args)
+    try:
+        args.func(args)
+    except BackendError as exc:
+        print(str(exc))
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

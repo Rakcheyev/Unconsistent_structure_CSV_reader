@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Dict, List, Literal, Optional, Set, Tuple, Union
 from uuid import UUID, uuid4
 
+from .versioning import HEADER_CLUSTER_VERSION, MAPPING_ARTIFACT_VERSION
+
 
 @dataclass(slots=True)
 class ColumnStats:
@@ -74,6 +76,7 @@ class SchemaDefinition:
     columns: List[SchemaColumn] = field(default_factory=list)
     canonical_schema_id: Optional[str] = None
     canonical_namespace: Optional[str] = None
+    canonical_schema_version: Optional[str] = None
 
 
 @dataclass(slots=True)
@@ -221,6 +224,7 @@ class HeaderCluster:
     variants: List[HeaderVariant] = field(default_factory=list)
     confidence_score: float = 1.0
     needs_review: bool = False
+    version: str = HEADER_CLUSTER_VERSION
 
 
 @dataclass(slots=True)
@@ -285,6 +289,7 @@ class ColumnProfileResult:
 class MappingConfig:
     """Serializable mapping between file blocks and schemas."""
 
+    artifact_version: str = MAPPING_ARTIFACT_VERSION
     blocks: List[FileBlock] = field(default_factory=list)
     schemas: List[SchemaDefinition] = field(default_factory=list)
     header_clusters: List[HeaderCluster] = field(default_factory=list)

@@ -14,6 +14,7 @@ from common.models import (
     SchemaSignature,
     SchemaMappingEntry,
 )
+from common.versioning import HEADER_CLUSTER_VERSION, MAPPING_ARTIFACT_VERSION
 
 
 def _build_mapping() -> MappingConfig:
@@ -71,6 +72,7 @@ def _build_mapping() -> MappingConfig:
 
 def test_mapping_config_to_dict_excludes_samples_by_default():
     payload = _build_mapping().to_dict()
+    assert payload["artifact_version"] == MAPPING_ARTIFACT_VERSION
     column_payload = payload["blocks"][0]["signature"]["columns"]["0"]
     assert "sample_values" not in column_payload
 
@@ -78,6 +80,7 @@ def test_mapping_config_to_dict_excludes_samples_by_default():
     cluster_payload = payload["header_clusters"][0]
     variant_payload = cluster_payload["variants"][0]
     assert "sample_values" not in variant_payload
+    assert cluster_payload["version"] == HEADER_CLUSTER_VERSION
 
     assert payload["column_profiles"][0]["header"] == "col0"
 
@@ -118,3 +121,17 @@ def test_mapping_config_round_trip_with_samples():
     restored_profile = restored.column_profiles[0]
     assert restored_profile.header == "col0"
     assert restored_profile.unique_estimate == 2
+
+
+def test_legacy_mapping_payloads_upgrade_versions():
+    mapping = _build_mapping()
+    payload = mapping.to_dict(include_samples=True)
+    payload.pop("artifact_version", None)
+    for cluster in payload.get("header_clusters", []):
+        cluster.pop("version", None)
+    restored = MappingConfig.from_dict(payload)
+    assert restored.artifact_version == MAPPING_ARTIFACT_VERSION
+    assert restored.header_clusters[0].version == HEADER_CLUSTER_VERSION
+    upgraded = restored.to_dict()
+    assert upgraded["artifact_version"] == MAPPING_ARTIFACT_VERSION
+    assert upgraded["header_clusters"][0]["version"] == HEADER_CLUSTER_VERSION

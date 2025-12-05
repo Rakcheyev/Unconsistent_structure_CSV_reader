@@ -1,0 +1,443 @@
+{
+  "generated_at": "2025-12-05T01:18:38Z",
+  "cluster_count": 19,
+  "clusters": [
+    {
+      "cluster_id": "ae1e7bb5-bcc2-4a71-b9b7-f51ddb28a2bf",
+      "canonical_name": "foxtrot.com.ua ID",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 1,
+          "raw_name": "foxtrot.com.ua ID",
+          "normalized_name": "foxtrot com ua id",
+          "detected_types": {
+            "date": 0,
+            "integer": 20202948,
+            "float": 0,
+            "text": 1,
+            "empty": 28122517
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.65,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "be0afed7-d96a-472a-914d-99975d60542e",
+      "canonical_name": "foxtrot.com.ua \u0431\u0440\u0435\u043d\u0434",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 2,
+          "raw_name": "foxtrot.com.ua \u0431\u0440\u0435\u043d\u0434",
+          "normalized_name": "foxtrot com ua brend",
+          "detected_types": {
+            "date": 0,
+            "integer": 206,
+            "float": 0,
+            "text": 20180065,
+            "empty": 28145195
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.65,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "09f0a704-0069-41c0-9c3a-ca8cf5ac6208",
+      "canonical_name": "foxtrot.com.ua \u043c\u043e\u0434\u0435\u043b\u044c",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 3,
+          "raw_name": "foxtrot.com.ua \u043c\u043e\u0434\u0435\u043b\u044c",
+          "normalized_name": "foxtrot com ua model",
+          "detected_types": {
+            "date": 353403,
+            "integer": 206,
+            "float": 0,
+            "text": 19849546,
+            "empty": 28122311
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.65,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "371548bd-afaa-49e2-b04a-8afc06e26d3e",
+      "canonical_name": "foxtrot.com.ua \u0446\u0435\u043d\u0430",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 4,
+          "raw_name": "foxtrot.com.ua \u0446\u0435\u043d\u0430",
+          "normalized_name": "foxtrot com ua tsena",
+          "detected_types": {
+            "date": 2,
+            "integer": 20188548,
+            "float": 848,
+            "text": 205,
+            "empty": 28135863
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.65,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "55727f70-aa86-4ef9-aa59-17c19d9578ac",
+      "canonical_name": "ID",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 5,
+          "raw_name": "ID",
+          "normalized_name": "id",
+          "detected_types": {
+            "date": 0,
+            "integer": 36268573,
+            "float": 12056708,
+            "text": 1,
+            "empty": 184
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.71,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "6dc995df-5cc7-44ef-99a5-0ee181edea04",
+      "canonical_name": "ZMS ID",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 0,
+          "raw_name": "ZMS ID",
+          "normalized_name": "zms id",
+          "detected_types": {
+            "date": 0,
+            "integer": 48325259,
+            "float": 0,
+            "text": 208,
+            "empty": 0
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.81,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "bda4e708-5433-420b-8eec-5fdc3064c2ad",
+      "canonical_name": "\u0410\u0434\u0440\u0435\u0441",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 16,
+          "raw_name": "\u0410\u0434\u0440\u0435\u0441",
+          "normalized_name": "adres",
+          "detected_types": {
+            "date": 0,
+            "integer": 0,
+            "float": 0,
+            "text": 48325049,
+            "empty": 5
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.81,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "cdf894f6-f2ae-4297-a219-0e3f018f0256",
+      "canonical_name": "\u0410\u0434\u0440\u0435\u0441. \u041a\u043e\u043b-\u0432\u043e",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 18,
+          "raw_name": "\u0410\u0434\u0440\u0435\u0441. \u041a\u043e\u043b-\u0432\u043e",
+          "normalized_name": "adres kol vo",
+          "detected_types": {
+            "date": 0,
+            "integer": 48325048,
+            "float": 0,
+            "text": 6,
+            "empty": 0
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.81,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "2afee5e1-da7c-4666-97ac-0ca7d4b3153e",
+      "canonical_name": "\u0410\u0434\u0440\u0435\u0441. \u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 17,
+          "raw_name": "\u0410\u0434\u0440\u0435\u0441. \u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435",
+          "normalized_name": "adres nazvanie",
+          "detected_types": {
+            "date": 0,
+            "integer": 0,
+            "float": 0,
+            "text": 48325054,
+            "empty": 0
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.81,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "68c8da81-8f9f-4610-ba64-031c03e5d32f",
+      "canonical_name": "\u0411\u0440\u0435\u043d\u0434",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 7,
+          "raw_name": "\u0411\u0440\u0435\u043d\u0434",
+          "normalized_name": "brend",
+          "detected_types": {
+            "date": 0,
+            "integer": 0,
+            "float": 0,
+            "text": 48296430,
+            "empty": 29036
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.81,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "552e07a2-7097-4f71-9619-421459ce9a2c",
+      "canonical_name": "\u0414\u0430\u0442\u0430",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 14,
+          "raw_name": "\u0414\u0430\u0442\u0430",
+          "normalized_name": "data",
+          "detected_types": {
+            "date": 48325048,
+            "integer": 0,
+            "float": 0,
+            "text": 1,
+            "empty": 5
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.81,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "6f068543-fc6f-45b3-b7b5-63f6195b918f",
+      "canonical_name": "\u0414\u043e\u043f. \u0446\u0435\u043d\u0430 1",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 15,
+          "raw_name": "\u0414\u043e\u043f. \u0446\u0435\u043d\u0430 1",
+          "normalized_name": "dop tsena 1",
+          "detected_types": {
+            "date": 5,
+            "integer": 0,
+            "float": 0,
+            "text": 1,
+            "empty": 48325048
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.81,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "4718716f-6a72-4cf4-9dc3-bf079b6a4ad9",
+      "canonical_name": "\u041a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u044f",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 6,
+          "raw_name": "\u041a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u044f",
+          "normalized_name": "kategoriya",
+          "detected_types": {
+            "date": 206,
+            "integer": 0,
+            "float": 0,
+            "text": 48325260,
+            "empty": 0
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.81,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "57616170-6d7d-42c4-8f1e-6b49b8890cbc",
+      "canonical_name": "\u041a\u043e\u0434 \u043f\u0440\u043e\u0438\u0437\u0432\u043e\u0434\u0438\u0442\u0435\u043b\u044f",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 9,
+          "raw_name": "\u041a\u043e\u0434 \u043f\u0440\u043e\u0438\u0437\u0432\u043e\u0434\u0438\u0442\u0435\u043b\u044f",
+          "normalized_name": "kod proizvoditelya",
+          "detected_types": {
+            "date": 0,
+            "integer": 0,
+            "float": 0,
+            "text": 212,
+            "empty": 48325048
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.81,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "3f7d5101-be22-47b7-bf9c-196288d2c327",
+      "canonical_name": "\u041c\u043e\u0434\u0435\u043b\u044c",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 8,
+          "raw_name": "\u041c\u043e\u0434\u0435\u043b\u044c",
+          "normalized_name": "model",
+          "detected_types": {
+            "date": 705291,
+            "integer": 0,
+            "float": 0,
+            "text": 47620175,
+            "empty": 0
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.81,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "53af034f-bd75-4788-ab7b-6f771ee0f723",
+      "canonical_name": "\u0421\u0441\u044b\u043b\u043a\u0430",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 12,
+          "raw_name": "\u0421\u0441\u044b\u043b\u043a\u0430",
+          "normalized_name": "ssylka",
+          "detected_types": {
+            "date": 1423413,
+            "integer": 5,
+            "float": 0,
+            "text": 46901636,
+            "empty": 0
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.8,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "0195db31-f44f-401e-954e-8204ac2ca364",
+      "canonical_name": "\u0421\u0442\u0430\u0440\u0430\u044f \u0446\u0435\u043d\u0430",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 13,
+          "raw_name": "\u0421\u0442\u0430\u0440\u0430\u044f \u0446\u0435\u043d\u0430",
+          "normalized_name": "staraya tsena",
+          "detected_types": {
+            "date": 0,
+            "integer": 12344281,
+            "float": 0,
+            "text": 6,
+            "empty": 35980767
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.71,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "c05cc47c-1da0-4666-8389-307402a56c2d",
+      "canonical_name": "\u0421\u0442\u0430\u0442\u0443\u0441",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 11,
+          "raw_name": "\u0421\u0442\u0430\u0442\u0443\u0441",
+          "normalized_name": "status",
+          "detected_types": {
+            "date": 0,
+            "integer": 48325053,
+            "float": 0,
+            "text": 1,
+            "empty": 0
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.81,
+      "needs_review": true,
+      "version": "1.1.0"
+    },
+    {
+      "cluster_id": "11c33d69-f8b1-40ab-bd69-6df4ebd0741d",
+      "canonical_name": "\u0426\u0435\u043d\u0430",
+      "variants": [
+        {
+          "file_path": "D:\\Git\\Unconsistent_structure_CSV_reader\\input_data\\comfy.ua-products-fastov-2025-11-11-11-38.csv",
+          "column_index": 10,
+          "raw_name": "\u0426\u0435\u043d\u0430",
+          "normalized_name": "tsena",
+          "detected_types": {
+            "date": 0,
+            "integer": 48325254,
+            "float": 0,
+            "text": 1,
+            "empty": 5
+          },
+          "row_count": 8516999
+        }
+      ],
+      "confidence_score": 0.81,
+      "needs_review": true,
+      "version": "1.1.0"
+    }
+  ]
+}

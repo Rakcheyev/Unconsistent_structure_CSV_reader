@@ -20,10 +20,17 @@ from .models import (
     SchemaColumn,
     SchemaMappingEntry,
 )
+from .versioning import (
+    HEADER_CLUSTER_VERSION,
+    LEGACY_HEADER_CLUSTER_VERSION,
+    MAPPING_ARTIFACT_VERSION,
+    LEGACY_MAPPING_ARTIFACT_VERSION,
+)
 
 
 def mapping_to_dict(mapping: MappingConfig, *, include_samples: bool = False) -> Dict[str, object]:
     payload: Dict[str, object] = {
+        "artifact_version": mapping.artifact_version or MAPPING_ARTIFACT_VERSION,
         "blocks": [serialize_block(block, include_samples) for block in mapping.blocks],
         "schemas": [serialize_schema(schema) for schema in mapping.schemas],
     }
@@ -43,6 +50,10 @@ def mapping_to_dict(mapping: MappingConfig, *, include_samples: bool = False) ->
 
 
 def mapping_from_dict(data: Dict[str, object]) -> MappingConfig:
+    source_version = str(data.get("artifact_version", LEGACY_MAPPING_ARTIFACT_VERSION))
+    artifact_version = (
+        source_version if source_version == MAPPING_ARTIFACT_VERSION else MAPPING_ARTIFACT_VERSION
+    )
     blocks_data = data.get("blocks", [])
     schemas_data = data.get("schemas", [])
     blocks = [deserialize_block(item) for item in blocks_data]
@@ -60,6 +71,7 @@ def mapping_from_dict(data: Dict[str, object]) -> MappingConfig:
     column_profiles_data = data.get("column_profiles", [])
     column_profiles = [deserialize_column_profile_result(item) for item in column_profiles_data]
     return MappingConfig(
+        artifact_version=artifact_version,
         blocks=blocks,
         schemas=schemas,
         header_clusters=header_clusters,
@@ -187,17 +199,25 @@ def serialize_header_cluster(cluster: HeaderCluster, include_samples: bool) -> D
         "variants": [serialize_header_variant(v, include_samples) for v in cluster.variants],
         "confidence_score": cluster.confidence_score,
         "needs_review": cluster.needs_review,
+        "version": cluster.version or HEADER_CLUSTER_VERSION,
     }
 
 
 def deserialize_header_cluster(data: Dict[str, object]) -> HeaderCluster:
     variants_data = data.get("variants", [])
+    stored_version = str(
+        data.get("version")
+        or data.get("algorithm_version")
+        or LEGACY_HEADER_CLUSTER_VERSION
+    )
+    version = stored_version if stored_version == HEADER_CLUSTER_VERSION else HEADER_CLUSTER_VERSION
     return HeaderCluster(
         cluster_id=UUID(str(data.get("cluster_id", UUID(int=0)))) if data.get("cluster_id") else UUID(int=0),
         canonical_name=str(data.get("canonical_name", "")),
         variants=[deserialize_header_variant(item) for item in variants_data],
         confidence_score=float(data.get("confidence_score", 1.0)),
         needs_review=bool(data.get("needs_review", False)),
+        version=version,
     )
 
 
@@ -314,6 +334,8 @@ def serialize_schema(schema: SchemaDefinition) -> Dict[str, object]:
         payload["canonical_schema_id"] = schema.canonical_schema_id
     if schema.canonical_namespace:
         payload["canonical_namespace"] = schema.canonical_namespace
+    if schema.canonical_schema_version:
+        payload["canonical_schema_version"] = schema.canonical_schema_version
     return payload
 
 
@@ -325,6 +347,7 @@ def deserialize_schema(data: Dict[str, object]) -> SchemaDefinition:
         columns=[deserialize_schema_column(item) for item in columns_data],
         canonical_schema_id=str(data["canonical_schema_id"]) if data.get("canonical_schema_id") else None,
         canonical_namespace=str(data["canonical_namespace"]) if data.get("canonical_namespace") else None,
+        canonical_schema_version=str(data["canonical_schema_version"]) if data.get("canonical_schema_version") else None,
     )
 
 

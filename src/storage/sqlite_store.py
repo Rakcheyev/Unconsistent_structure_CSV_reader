@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
 
+from common.mapping_serialization import serialize_schema_column
 from common.models import (
     ColumnProfileResult,
     FileHeaderSummary,
@@ -18,6 +19,7 @@ from common.models import (
     JobProgressEvent,
     MappingConfig,
 )
+from common.versioning import HEADER_CLUSTER_VERSION, MAPPING_ARTIFACT_VERSION
 
 
 SCHEMA_MIGRATIONS_TABLE = """
@@ -204,6 +206,15 @@ MIGRATIONS: List[tuple[int, List[str]]] = [
             """,
         ],
     ),
+    (
+        5,
+        [
+            "ALTER TABLE schemas ADD COLUMN canonical_schema_id TEXT",
+            "ALTER TABLE schemas ADD COLUMN canonical_namespace TEXT",
+            "ALTER TABLE schemas ADD COLUMN canonical_schema_version TEXT",
+            "CREATE TABLE IF NOT EXISTS artifact_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at REAL NOT NULL)",
+        ],
+    ),
 ]
 
 MAX_PROGRESS_EVENTS_PER_SCHEMA = 500
@@ -218,17 +229,39 @@ def initialize(db_path: Path) -> None:
 def persist_mapping(mapping: MappingConfig, db_path: Path) -> None:
     initialize(db_path)
     now = time.time()
+    artifact_version = mapping.artifact_version or MAPPING_ARTIFACT_VERSION
+    header_cluster_version = (
+        mapping.header_clusters[0].version or HEADER_CLUSTER_VERSION
+        if mapping.header_clusters
+        else HEADER_CLUSTER_VERSION
+    )
     with sqlite3.connect(db_path) as conn:
         conn.execute("DELETE FROM schemas")
         conn.execute("DELETE FROM blocks")
         for schema in mapping.schemas:
             conn.execute(
-                "INSERT OR REPLACE INTO schemas(id, name, columns_json, updated_at) VALUES (?, ?, ?, ?)",
+                """
+                INSERT OR REPLACE INTO schemas(
+                    id,
+                    name,
+                    columns_json,
+                    updated_at,
+                    canonical_schema_id,
+                    canonical_namespace,
+                    canonical_schema_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     str(schema.id),
                     schema.name,
-                    json.dumps([col.__dict__ for col in schema.columns], ensure_ascii=False),
+                    json.dumps(
+                        [serialize_schema_column(col) for col in schema.columns],
+                        ensure_ascii=False,
+                    ),
                     now,
+                    schema.canonical_schema_id,
+                    schema.canonical_namespace,
+                    schema.canonical_schema_version,
                 ),
             )
         for block in mapping.blocks:
@@ -247,6 +280,14 @@ def persist_mapping(mapping: MappingConfig, db_path: Path) -> None:
                     block.end_line,
                 ),
             )
+        _write_artifact_metadata(
+            conn,
+            {
+                "mapping.artifact_version": artifact_version,
+                "header_clusters.version": header_cluster_version,
+            },
+            now,
+        )
         conn.commit()
 
 
@@ -694,3 +735,18 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             (version, time.time()),
         )
         conn.commit()
+
+
+def _write_artifact_metadata(
+    conn: sqlite3.Connection,
+    entries: Dict[str, str],
+    timestamp: float,
+) -> None:
+    if not entries:
+        return
+    for key, value in entries.items():
+        conn.execute("DELETE FROM artifact_metadata WHERE key = ?", (key,))
+        conn.execute(
+            "INSERT INTO artifact_metadata(key, value, updated_at) VALUES (?, ?, ?)",
+            (key, value, timestamp),
+        )

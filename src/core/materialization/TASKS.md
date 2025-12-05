@@ -8,6 +8,7 @@
    - Використовує мапінг колонок і нормалізатори значень.
 3. **Writers** _(Status: ✅ done)_
    - CSV, Parquet (PyArrow) і SQLite database writers доступні через `--writer-format` / `--db-url`.
+   - CSV writer перевіряє, що навіть після resume/append порожні файли отримують заголовок, тож повторні запуски не продукують «голої» першої строки.
    - Подальші бекенди (Parquet via Arrow Datasets, cloud warehouses) можуть додаватися окремими задачами.
 4. **Parallel Execution** _(Status: ⚙️ in progress)_
    - Обмеження максимум двох одночасних schema jobs реалізоване через `ThreadPoolExecutor`.
